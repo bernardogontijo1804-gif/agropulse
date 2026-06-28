@@ -273,4 +273,5 @@ def cadastrar():
 if __name__ == "__main__":
     print("🌐 Formulário rodando em: http://localhost:5000")
     print("✋ Pressione CTRL+C para parar")
-    app.run(debug=False, port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port)
