@@ -10,11 +10,11 @@ from datetime import datetime
 # SUAS CONFIGURAÇÕES — PREENCHA AQUI
 # ========================================
 
-ANTHROPIC_API_KEY = "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"
-
-TWILIO_SID = "ACa149c70f4cf4ef201d5f7bce2d8cf14b"
-TWILIO_TOKEN = "58180ce99b83135e07ca738ae7b7fa1a"
-TWILIO_WHATSAPP = "whatsapp:+14155238886"
+import os
+ANTHROPIC_API_KEY = os.environ.get("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")
+TWILIO_SID = os.environ.get("ACa149c70f4cf4ef201d5f7bce2d8cf14b")
+TWILIO_TOKEN = os.environ.get(" 58180ce99b83135e07ca738ae7b7fa1a")
+TWILIO_WHATSAPP = os.environ.get("+16292847351")
 
 # Coloque seu número com código do país (sem espaços)
 # Exemplo: whatsapp:+5538999999999
