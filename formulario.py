@@ -221,35 +221,42 @@ SUCESSO_HTML = """
 """
 
 def salvar_usuario(nome, whatsapp, commodities):
-    """Salva o novo usuário no arquivo usuarios.py"""
-    arquivo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usuarios.py")
+    """Salva o novo usuário direto no banco de dados"""
+    import sqlite3
+    import json
     
-    with open(arquivo, "r", encoding="utf-8") as f:
-        conteudo = f.read()
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agropulse.db")
     
-    novo_usuario = f"""    {{
-        "nome": "{nome}",
-        "whatsapp": "+55{whatsapp}",
-        "ativo": True,
-        "commodities": {json.dumps(commodities, ensure_ascii=False)}
-    }},\n"""
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
     
-    if "# Adicione mais produtores aqui seguindo o mesmo modelo:" in conteudo:
-        conteudo = conteudo.replace(
-            "    # Adicione mais produtores aqui seguindo o mesmo modelo:", 
-            novo_usuario + "    # Adicione mais produtores aqui seguindo o mesmo modelo:"
-        )
-    else:
-        conteudo = conteudo.replace(
-            "]",
-            novo_usuario + "]",
-            1
-        )
+    c.execute('''CREATE TABLE IF NOT EXISTS produtores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL,
+        whatsapp TEXT NOT NULL UNIQUE,
+        ativo INTEGER DEFAULT 1,
+        commodities TEXT DEFAULT '["Soja"]',
+        data_cadastro TEXT DEFAULT CURRENT_TIMESTAMP,
+        mensagens_enviadas INTEGER DEFAULT 0
+    )''')
     
-    with open(arquivo, "w", encoding="utf-8") as f:
-        f.write(conteudo)
+    c.execute('''CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        evento TEXT,
+        detalhes TEXT,
+        data TEXT DEFAULT CURRENT_TIMESTAMP
+    )''')
     
-    print(f"✅ Usuário {nome} salvo no arquivo!")
+    c.execute("INSERT OR IGNORE INTO produtores (nome, whatsapp, commodities) VALUES (?,?,?)",
+              (nome, whatsapp, json.dumps(commodities, ensure_ascii=False)))
+    
+    c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)",
+              ("Novo cadastro via formulário", f"{nome} — {whatsapp}"))
+    
+    conn.commit()
+    conn.close()
+    
+    print(f"✅ Usuário {nome} salvo no banco de dados!")
 
 @app.route("/")
 def formulario():
