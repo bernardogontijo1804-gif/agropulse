@@ -1,9 +1,20 @@
 import threading
 import schedule
 import time
-from formulario import app
-from agropulse import enviar_relatorio
 import os
+from formulario import app as formulario_app
+from painel import app as painel_app, init_db
+from agropulse import enviar_relatorio
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
+from flask import Flask
+
+# App principal
+app = Flask(__name__)
+
+# Monta formulário na raiz e painel em /admin
+app.wsgi_app = DispatcherMiddleware(formulario_app, {
+    '/admin': painel_app
+})
 
 def rodar_agendamento():
     schedule.every().day.at("18:00").do(enviar_relatorio)
@@ -13,11 +24,14 @@ def rodar_agendamento():
         time.sleep(60)
 
 if __name__ == "__main__":
-    # Roda o agendamento em segundo plano
+    init_db()
+    
+    # Inicia agendamento em segundo plano
     thread = threading.Thread(target=rodar_agendamento, daemon=True)
     thread.start()
     
-    # Roda o formulário web
     port = int(os.environ.get("PORT", 5000))
-    print(f"🌐 Formulário rodando na porta {port}")
+    print(f"🚀 AgroPulse rodando na porta {port}")
+    print(f"🌐 Formulário: http://localhost:{port}")
+    print(f"🎛️ Painel admin: http://localhost:{port}/admin")
     app.run(debug=False, host="0.0.0.0", port=port)
