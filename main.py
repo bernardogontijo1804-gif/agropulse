@@ -3,15 +3,15 @@ import schedule
 import time
 import os
 import json
+import sqlite3
 from formulario import app as formulario_app
 from painel import app as painel_app, init_db
 from agropulse import enviar_relatorio
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
-from flask import Flask, request
-import sqlite3
+from flask import Flask, request, redirect
 
 # ========================================
-# WEBHOOK — adicionado direto no app principal
+# WEBHOOK + REDIRECIONAMENTO ADMIN
 # ========================================
 WEBHOOK_VERIFY_TOKEN = os.environ.get("WEBHOOK_VERIFY_TOKEN", "agropulse2024")
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agropulse.db")
@@ -21,16 +21,11 @@ def webhook_verificar():
     mode      = request.args.get("hub.mode")
     token     = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
-
-    print(f"🔔 Webhook GET recebido — mode={mode}, token={token}, challenge={challenge}")
-
+    print(f"🔔 Webhook GET recebido — mode={mode}, token={token}")
     if mode == "subscribe" and token == WEBHOOK_VERIFY_TOKEN:
         print("✅ Webhook verificado com sucesso!")
         return challenge, 200
-
-    print("❌ Token incorreto na verificação do webhook")
     return "Forbidden", 403
-
 
 @formulario_app.route("/webhook", methods=["POST"])
 def webhook_receber():
@@ -48,6 +43,18 @@ def webhook_receber():
             print(f"Erro ao salvar log: {e}")
     return "OK", 200
 
+@formulario_app.route("/admin")
+@formulario_app.route("/admin/")
+def redirecionar_admin():
+    return redirect("/admin/login")
+
+@formulario_app.route("/teste-envio")
+def teste_envio():
+    try:
+        enviar_relatorio()
+        return "✅ Relatório enviado com sucesso! Verifique o WhatsApp.", 200
+    except Exception as e:
+        return f"❌ Erro ao enviar: {str(e)}", 500
 
 # ========================================
 # APP PRINCIPAL
@@ -76,4 +83,5 @@ if __name__ == "__main__":
     print(f"🌐 Formulário:  http://localhost:{port}")
     print(f"🎛️  Painel admin: http://localhost:{port}/admin")
     print(f"🔗 Webhook:     http://localhost:{port}/webhook")
+    print(f"🧪 Teste envio: http://localhost:{port}/teste-envio")
     app.run(debug=False, host="0.0.0.0", port=port)
