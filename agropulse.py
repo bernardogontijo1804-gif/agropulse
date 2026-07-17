@@ -12,8 +12,8 @@ from flask import Flask, request
 # CONFIGURAÇÕES — todas por variável de ambiente
 # ========================================
 ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
-WHATSAPP_TOKEN      = os.environ.get("WHATSAPP_TOKEN", "")       # Token da Meta Cloud API
-WHATSAPP_PHONE_ID   = os.environ.get("WHATSAPP_PHONE_ID", "")    # Phone Number ID do painel da Meta
+ZAPI_INSTANCE_ID = os.environ.get("ZAPI_INSTANCE_ID", "")
+ZAPI_TOKEN       = os.environ.get("ZAPI_TOKEN", "")
 WEBHOOK_VERIFY_TOKEN = os.environ.get("WEBHOOK_VERIFY_TOKEN", "agropulse2024")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agropulse.db")
@@ -205,23 +205,18 @@ _AgroPulse AI — Informação que vale dinheiro_ 💰"""
 
 
 # ========================================
-# ENVIO PELO WHATSAPP (Meta Cloud API)
+# ENVIO PELO WHATSAPP (Z-API)
 # ========================================
-def enviar_whatsapp_meta(numero, mensagem):
+def enviar_whatsapp_zapi(numero, mensagem):
     """
-    Envia mensagem de texto via Meta Cloud API.
-    O número deve estar no formato internacional sem '+': ex: 5538999999999
+    Envia mensagem de texto via Z-API.
+    O número deve estar no formato: 5538999999999 (com 55 + DDD + número)
     """
-    url     = f"https://graph.facebook.com/v19.0/{WHATSAPP_PHONE_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type" : "application/json"
-    }
+    url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
+    headers = {"Content-Type": "application/json"}
     payload = {
-        "messaging_product": "whatsapp",
-        "to"               : numero,
-        "type"             : "text",
-        "text"             : {"body": mensagem}
+        "phone"  : numero,
+        "message": mensagem
     }
     resposta = requests.post(url, headers=headers, json=payload)
     return resposta.status_code, resposta.json()
@@ -248,7 +243,7 @@ def enviar_whatsapp(mensagem):
             if not numero.startswith("55"):
                 numero = "55" + numero
 
-            status, resposta = enviar_whatsapp_meta(numero, mensagem)
+            status, resposta = enviar_whatsapp_zapi(numero, mensagem)
 
             if status == 200:
                 print(f"✅ Enviado para {usuario['nome']} ({numero})")
