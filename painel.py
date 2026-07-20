@@ -119,7 +119,7 @@ input:focus { border-color:#1a4d2e; }
   <h1>🌾 AgroPulse — Painel Admin</h1>
   <div>
     <span>Olá, {{ usuario }}!</span>
-    <a href="/logout">Sair</a>
+    <a href="/admin/logout">Sair</a>
   </div>
 </div>
 
@@ -149,7 +149,7 @@ input:focus { border-color:#1a4d2e; }
     </div>
     <div class="dispatch-box">
       <p>Envia o relatório com as cotações atuais para todos os produtores ativos imediatamente.</p>
-      <form method="POST" action="/disparar">
+      <form method="POST" action="/admin/disparar">
         <button type="submit" class="btn btn-gold">🚀 Enviar relatório agora</button>
       </form>
     </div>
@@ -159,7 +159,7 @@ input:focus { border-color:#1a4d2e; }
     <div class="card-title">
       ➕ Adicionar produtor manualmente
     </div>
-    <form method="POST" action="/adicionar">
+    <form method="POST" action="/admin/adicionar">
       <div class="form-row">
         <div class="form-group">
           <label>Nome completo</label>
@@ -207,12 +207,12 @@ input:focus { border-color:#1a4d2e; }
             {% endif %}
           </td>
           <td style="display:flex; gap:8px;">
-            <form method="POST" action="/toggle/{{ p[0] }}">
+            <form method="POST" action="/admin/toggle/{{ p[0] }}">
               <button class="btn {% if p[3] == 1 %}btn-danger{% else %}btn-success{% endif %}">
                 {% if p[3] == 1 %}Pausar{% else %}Ativar{% endif %}
               </button>
             </form>
-            <form method="POST" action="/remover/{{ p[0] }}" onsubmit="return confirm('Remover {{ p[1] }}?')">
+            <form method="POST" action="/admin/remover/{{ p[0] }}" onsubmit="return confirm('Remover {{ p[1] }}?')">
               <button class="btn btn-danger">Remover</button>
             </form>
           </td>
@@ -293,19 +293,19 @@ def login():
         senha = request.form.get("senha","")
         if usuario in USUARIOS_ADMIN and check_password_hash(USUARIOS_ADMIN[usuario], senha):
             session["usuario"] = usuario
-            return redirect("/painel")
+            return redirect("/admin/painel")
         return render_template_string(LOGIN_HTML, erro="Usuário ou senha incorretos.")
     return render_template_string(LOGIN_HTML, erro=None)
 
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect("/login")
+    return redirect("/admin/login")
 
 @app.route("/painel")
 def painel():
     if "usuario" not in session:
-        return redirect("/login")
+        return redirect("/admin/login")
     produtores = get_produtores()
     ativos, total, msgs, logs = get_stats()
     msg = request.args.get("msg")
@@ -318,7 +318,7 @@ def painel():
 @app.route("/adicionar", methods=["POST"])
 def adicionar():
     if "usuario" not in session:
-        return redirect("/login")
+        return redirect("/admin/login")
     nome = request.form.get("nome","").strip()
     whatsapp = request.form.get("whatsapp","").strip().replace(" ","").replace("-","")
     try:
@@ -329,14 +329,14 @@ def adicionar():
                   ("Novo cadastro", f"{nome} — {whatsapp}"))
         conn.commit()
         conn.close()
-        return redirect("/painel?msg=Produtor+adicionado+com+sucesso!&tipo=success")
+        return redirect("/admin/painel?msg=Produtor+adicionado+com+sucesso!&tipo=success")
     except:
-        return redirect("/painel?msg=Erro:+WhatsApp+já+cadastrado.&tipo=error")
+        return redirect("/admin/painel?msg=Erro:+WhatsApp+já+cadastrado.&tipo=error")
 
 @app.route("/toggle/<int:id>", methods=["POST"])
 def toggle(id):
     if "usuario" not in session:
-        return redirect("/login")
+        return redirect("/admin/login")
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT ativo, nome FROM produtores WHERE id=?", (id,))
@@ -348,12 +348,12 @@ def toggle(id):
               (status, row[1]))
     conn.commit()
     conn.close()
-    return redirect("/painel?msg=Status+atualizado!&tipo=success")
+    return redirect("/admin/painel?msg=Status+atualizado!&tipo=success")
 
 @app.route("/remover/<int:id>", methods=["POST"])
 def remover(id):
     if "usuario" not in session:
-        return redirect("/login")
+        return redirect("/admin/login")
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT nome FROM produtores WHERE id=?", (id,))
@@ -363,12 +363,12 @@ def remover(id):
               ("Removido", nome))
     conn.commit()
     conn.close()
-    return redirect("/painel?msg=Produtor+removido.&tipo=success")
+    return redirect("/admin/painel?msg=Produtor+removido.&tipo=success")
 
 @app.route("/disparar", methods=["POST"])
 def disparar():
     if "usuario" not in session:
-        return redirect("/login")
+        return redirect("/admin/login")
     try:
         import sys
         import os
@@ -383,9 +383,9 @@ def disparar():
                   ("Disparo manual", f"Disparado por {session['usuario']}"))
         conn.commit()
         conn.close()
-        return redirect("/painel?msg=Relatório+enviado!&tipo=success")
+        return redirect("/admin/painel?msg=Relatório+enviado!&tipo=success")
     except Exception as e:
-        return redirect(f"/painel?msg=Erro:+{str(e)}&tipo=error")
+        return redirect(f"/admin/painel?msg=Erro:+{str(e)}&tipo=error")
 if __name__ == "__main__":
     init_db()
     print("🎛️ Painel rodando em: http://localhost:5001")
