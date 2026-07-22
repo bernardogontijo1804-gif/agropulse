@@ -56,6 +56,54 @@ def teste_envio():
     except Exception as e:
         return f"❌ Erro ao enviar: {str(e)}", 500
 
+@formulario_app.route("/diagnostico")
+def diagnostico():
+    import requests as req
+    import sqlite3
+
+    resultado = []
+
+    # 1. Checar variáveis de ambiente
+    zapi_instance = os.environ.get("ZAPI_INSTANCE_ID", "")
+    zapi_token    = os.environ.get("ZAPI_TOKEN", "")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    resultado.append(f"ZAPI_INSTANCE_ID: {'✅ preenchido' if zapi_instance else '❌ VAZIO'}")
+    resultado.append(f"ZAPI_TOKEN: {'✅ preenchido' if zapi_token else '❌ VAZIO'}")
+    resultado.append(f"ANTHROPIC_API_KEY: {'✅ preenchido' if anthropic_key else '❌ VAZIO'}")
+
+    # 2. Buscar produtores
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT nome, whatsapp, ativo FROM produtores")
+        produtores = c.fetchall()
+        conn.close()
+        resultado.append(f"\nProdutores no banco: {len(produtores)}")
+        for p in produtores:
+            resultado.append(f"  - {p[0]} | {p[1]} | ativo={p[2]}")
+    except Exception as e:
+        resultado.append(f"Erro ao buscar produtores: {e}")
+
+    # 3. Testar Z-API com primeiro produtor
+    if produtores and zapi_instance and zapi_token:
+        numero = produtores[0][1].strip().replace(" ", "").replace("-", "")
+        if not numero.startswith("55"):
+            numero = "55" + numero
+        url = f"https://api.z-api.io/instances/{zapi_instance}/token/{zapi_token}/send-text"
+        try:
+            r = req.post(url,
+                headers={"Content-Type": "application/json"},
+                json={"phone": numero, "message": "🌾 Teste AgroPulse — diagnóstico do sistema"},
+                timeout=10)
+            resultado.append(f"\nTeste Z-API para {numero}:")
+            resultado.append(f"  Status HTTP: {r.status_code}")
+            resultado.append(f"  Resposta: {r.text[:300]}")
+        except Exception as e:
+            resultado.append(f"\nErro ao chamar Z-API: {e}")
+
+    return "<pre style='font-family:monospace;font-size:14px;padding:20px'>" + "\n".join(resultado) + "</pre>", 200
+
 # ========================================
 # APP PRINCIPAL
 # ========================================
