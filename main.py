@@ -50,11 +50,32 @@ def redirecionar_admin():
 
 @formulario_app.route("/teste-envio")
 def teste_envio():
+    import agropulse as ag
+    resultado = []
     try:
-        enviar_relatorio()
-        return "✅ Relatório enviado com sucesso! Verifique o WhatsApp.", 200
+        precos = ag.buscar_precos()
+        resultado.append(f"OK Precos buscados: {len(precos)} commodities")
+        resumo = ag.gerar_resumo_ia(precos)
+        resultado.append(f"OK Resumo IA: {resumo[:60]}...")
+        mensagem = ag.montar_mensagem(precos, resumo)
+        resultado.append(f"OK Mensagem: {len(mensagem)} chars")
+        import sqlite3
+        conn = sqlite3.connect(ag.DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT nome, whatsapp FROM produtores WHERE ativo=1")
+        produtores = c.fetchall()
+        conn.close()
+        resultado.append(f"OK Produtores ativos: {len(produtores)}")
+        for nome, whatsapp in produtores:
+            numero = whatsapp.strip().replace(" ", "").replace("-", "")
+            if not numero.startswith("55"):
+                numero = "55" + numero
+            status, resp = ag.enviar_whatsapp_zapi(numero, mensagem)
+            icone = "OK" if status == 200 else "ERRO"
+            resultado.append(f"{icone} {nome} ({numero}): HTTP {status} -- {str(resp)[:100]}")
     except Exception as e:
-        return f"❌ Erro ao enviar: {str(e)}", 500
+        resultado.append(f"ERRO: {str(e)}")
+    return "<pre style='padding:20px;font-size:13px'>" + "\n".join(resultado) + "</pre>", 200
 
 @formulario_app.route("/diagnostico")
 def diagnostico():
