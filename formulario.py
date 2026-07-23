@@ -1,8 +1,13 @@
 from flask import Flask, request, render_template_string, redirect
 import json
 import os
+import sqlite3
+import requests
 
 app = Flask(__name__)
+
+# Número da AgroPulse (sem + e sem espaços)
+AGROPULSE_NUMERO = "5538998828784"
 
 FORMULARIO_HTML = """
 <!DOCTYPE html>
@@ -196,6 +201,29 @@ SUCESSO_HTML = """
         h1 { color: #2d5a27; margin-bottom: 10px; }
         p { color: #666; line-height: 1.6; margin-bottom: 20px; }
         .aviso {
+            background: #f0f7f0;
+            border-left: 4px solid #2d5a27;
+            padding: 16px;
+            border-radius: 0 8px 8px 0;
+            font-size: 14px;
+            color: #444;
+            text-align: left;
+            margin-bottom: 20px;
+        }
+        .btn-whatsapp {
+            display: inline-block;
+            background: #25D366;
+            color: white;
+            padding: 16px 32px;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: 700;
+            text-decoration: none;
+            margin-top: 8px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .passo {
             background: #fff8e1;
             border-left: 4px solid #f9a825;
             padding: 12px 16px;
@@ -203,6 +231,7 @@ SUCESSO_HTML = """
             font-size: 13px;
             color: #444;
             text-align: left;
+            margin-top: 16px;
         }
     </style>
 </head>
@@ -210,10 +239,18 @@ SUCESSO_HTML = """
     <div class="card">
         <div class="icon">✅</div>
         <h1>Cadastro realizado!</h1>
-        <p>Obrigado, <strong>{{ nome }}</strong>! Você receberá os relatórios diários do AgroPulse todo dia às 18h no WhatsApp.</p>
+        <p>Obrigado, <strong>{{ nome }}</strong>! Seu cadastro foi confirmado.</p>
+
         <div class="aviso">
-            📲 <strong>Passo importante:</strong> Para ativar o recebimento, envie a mensagem abaixo para o número <strong>+1 415 523 8886</strong> no WhatsApp:<br><br>
-            <strong>join air-appropriate</strong>
+            📲 <strong>Último passo:</strong> Para ativar o recebimento dos relatórios, clique no botão abaixo e envie a mensagem para a AgroPulse no WhatsApp.
+        </div>
+
+        <a class="btn-whatsapp" href="https://wa.me/{{ agropulse_numero }}?text={{ mensagem_encoded }}" target="_blank">
+            📱 Ativar recebimento no WhatsApp
+        </a>
+
+        <div class="passo">
+            ⚠️ <strong>Importante:</strong> Você precisa enviar a mensagem para que os relatórios cheguem no seu WhatsApp. É só clicar no botão acima!
         </div>
     </div>
 </body>
@@ -221,15 +258,9 @@ SUCESSO_HTML = """
 """
 
 def salvar_usuario(nome, whatsapp, commodities):
-    """Salva o novo usuário direto no banco de dados"""
-    import sqlite3
-    import json
-    
     db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agropulse.db")
-    
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
-    
     c.execute('''CREATE TABLE IF NOT EXISTS produtores (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT NOT NULL,
@@ -239,43 +270,88 @@ def salvar_usuario(nome, whatsapp, commodities):
         data_cadastro TEXT DEFAULT CURRENT_TIMESTAMP,
         mensagens_enviadas INTEGER DEFAULT 0
     )''')
-    
     c.execute('''CREATE TABLE IF NOT EXISTS logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         evento TEXT,
         detalhes TEXT,
         data TEXT DEFAULT CURRENT_TIMESTAMP
     )''')
-    
     c.execute("INSERT OR IGNORE INTO produtores (nome, whatsapp, commodities) VALUES (?,?,?)",
               (nome, whatsapp, json.dumps(commodities, ensure_ascii=False)))
-    
     c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)",
               ("Novo cadastro via formulário", f"{nome} — {whatsapp}"))
-    
     conn.commit()
     conn.close()
-    
     print(f"✅ Usuário {nome} salvo no banco de dados!")
+
+
+def enviar_boas_vindas(nome, whatsapp):
+    """Envia mensagem de boas-vindas pelo Z-API assim que o produtor se cadastra"""
+    zapi_instance = os.environ.get("ZAPI_INSTANCE_ID", "")
+    zapi_token    = os.environ.get("ZAPI_TOKEN", "")
+
+    if not zapi_instance or not zapi_token:
+        print("⚠️ Z-API não configurado — boas-vindas não enviada")
+        return
+
+    numero = whatsapp.strip().replace(" ", "").replace("-", "")
+    if not numero.startswith("55"):
+        numero = "55" + numero
+
+    mensagem = (
+        f"🌾 Olá, {nome}! Bem-vindo à *AgroPulse*!\n\n"
+        f"Seu cadastro foi confirmado com sucesso ✅\n\n"
+        f"A partir de hoje você receberá todo dia às *18h* um relatório completo com:\n"
+        f"📊 Cotações da Bolsa de Chicago\n"
+        f"💵 Câmbio do dia\n"
+        f"🚢 Preços nos portos brasileiros\n"
+        f"🤖 Análise gerada por Inteligência Artificial\n\n"
+        f"_AgroPulse AI — Informação que vale dinheiro_ 💰"
+    )
+
+    url = f"https://api.z-api.io/instances/{zapi_instance}/token/{zapi_token}/send-text"
+    try:
+        r = requests.post(url,
+            headers={"Content-Type": "application/json"},
+            json={"phone": numero, "message": mensagem},
+            timeout=10)
+        print(f"📩 Boas-vindas para {nome} ({numero}): HTTP {r.status_code}")
+    except Exception as e:
+        print(f"⚠️ Erro ao enviar boas-vindas: {e}")
+
 
 @app.route("/")
 def formulario():
     return render_template_string(FORMULARIO_HTML)
 
+
 @app.route("/cadastrar", methods=["POST"])
 def cadastrar():
+    from urllib.parse import quote
+
     nome = request.form.get("nome", "").strip()
     whatsapp = request.form.get("whatsapp", "").strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
     commodities = request.form.getlist("commodities")
-    
+
     if not commodities:
         commodities = ["Soja"]
-    
+
     salvar_usuario(nome, whatsapp, commodities)
-    
+
+    # Envia mensagem de boas-vindas automática
+    enviar_boas_vindas(nome, whatsapp)
+
     print(f"✅ Novo cadastro: {nome} — {whatsapp}")
-    
-    return render_template_string(SUCESSO_HTML, nome=nome)
+
+    # Mensagem pré-preenchida para o produtor enviar para a AgroPulse
+    mensagem_wa = f"Olá! Sou {nome} e acabei de me cadastrar na AgroPulse. Quero receber os relatórios diários de mercado! 🌾"
+    mensagem_encoded = quote(mensagem_wa)
+
+    return render_template_string(SUCESSO_HTML,
+        nome=nome,
+        agropulse_numero=AGROPULSE_NUMERO,
+        mensagem_encoded=mensagem_encoded)
+
 
 if __name__ == "__main__":
     print("🌐 Formulário rodando em: http://localhost:5000")
