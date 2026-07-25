@@ -12,8 +12,9 @@ from flask import Flask, request
 # CONFIGURAÇÕES — todas por variável de ambiente
 # ========================================
 ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
-ZAPI_INSTANCE_ID = os.environ.get("ZAPI_INSTANCE_ID", "")
-ZAPI_TOKEN       = os.environ.get("ZAPI_TOKEN", "")
+ZAPI_INSTANCE_ID   = os.environ.get("ZAPI_INSTANCE_ID", "")
+ZAPI_TOKEN         = os.environ.get("ZAPI_TOKEN", "")
+ZAPI_CLIENT_TOKEN  = os.environ.get("ZAPI_CLIENT_TOKEN", "")
 WEBHOOK_VERIFY_TOKEN = os.environ.get("WEBHOOK_VERIFY_TOKEN", "agropulse2024")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agropulse.db")
@@ -213,7 +214,10 @@ def enviar_whatsapp_zapi(numero, mensagem):
     O número deve estar no formato: 5538999999999 (com 55 + DDD + número)
     """
     url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "Client-Token": ZAPI_CLIENT_TOKEN
+    }
     payload = {
         "phone"  : numero,
         "message": mensagem
