@@ -309,10 +309,11 @@ def enviar_boas_vindas(nome, whatsapp):
         f"_AgroPulse AI — Informação que vale dinheiro_ 💰"
     )
 
+    zapi_client_token = os.environ.get("ZAPI_CLIENT_TOKEN", "")
     url = f"https://api.z-api.io/instances/{zapi_instance}/token/{zapi_token}/send-text"
     try:
         r = requests.post(url,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Client-Token": zapi_client_token},
             json={"phone": numero, "message": mensagem},
             timeout=10)
         print(f"📩 Boas-vindas para {nome} ({numero}): HTTP {r.status_code}")
