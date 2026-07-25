@@ -139,7 +139,13 @@ FORMULARIO_HTML = """
 
             <div class="form-group">
                 <label>📱 WhatsApp (com DDD)</label>
-                <input type="text" name="whatsapp" placeholder="Ex: 38999999999" required>
+                <div style="display:flex;align-items:center;border:2px solid #e0e0e0;border-radius:8px;overflow:hidden;" id="wp-wrap">
+                    <span style="background:#f5f5f5;padding:12px 14px;font-size:15px;color:#555;border-right:2px solid #e0e0e0;white-space:nowrap;">🇧🇷 +55</span>
+                    <input type="text" name="whatsapp" placeholder="38999999999" required
+                        style="border:none;border-radius:0;flex:1;outline:none;padding:12px 16px;font-size:15px;"
+                        onfocus="document.getElementById('wp-wrap').style.borderColor='#2d5a27'"
+                        onblur="document.getElementById('wp-wrap').style.borderColor='#e0e0e0'">
+                </div>
             </div>
 
             <div class="form-group">
