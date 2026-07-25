@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify
+from flask import Flask, render_template_string, request, redirect, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import sqlite3
@@ -8,19 +8,13 @@ import json
 app = Flask(__name__)
 app.secret_key = "agropulse2026secretkey"
 
-# ========================================
-# CONFIGURAÇÕES DE ACESSO
-# ========================================
 USUARIOS_ADMIN = {
     "bernardo": generate_password_hash("senha123"),
     "anderson": generate_password_hash("senha123"),
 }
 
-DB_PATH = "agropulse.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agropulse.db")
 
-# ========================================
-# BANCO DE DADOS
-# ========================================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -42,10 +36,14 @@ def init_db():
     conn.commit()
     conn.close()
 
-def get_produtores():
+def get_produtores(busca=""):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT * FROM produtores ORDER BY data_cadastro DESC")
+    if busca:
+        c.execute("SELECT * FROM produtores WHERE nome LIKE ? OR whatsapp LIKE ? ORDER BY data_cadastro DESC",
+                  (f"%{busca}%", f"%{busca}%"))
+    else:
+        c.execute("SELECT * FROM produtores ORDER BY data_cadastro DESC")
     rows = c.fetchall()
     conn.close()
     return rows
@@ -64,9 +62,6 @@ def get_stats():
     conn.close()
     return ativos, total, msgs, logs
 
-# ========================================
-# HTML DO PAINEL
-# ========================================
 PAINEL_HTML = """
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -100,6 +95,7 @@ tr:hover td { background:#f9fdf9; }
 .btn-success { background:#e8f5e9; color:#1a4d2e; }
 .btn-primary { background:#1a4d2e; color:#fff; }
 .btn-gold { background:#c8a84b; color:#fff; }
+.btn-edit { background:#e3f2fd; color:#1565c0; }
 .form-row { display:grid; grid-template-columns:1fr 1fr auto; gap:12px; align-items:end; }
 .form-group { display:flex; flex-direction:column; gap:6px; }
 label { font-size:13px; font-weight:500; color:#444; }
@@ -112,6 +108,17 @@ input:focus { border-color:#1a4d2e; }
 .alert-error { background:#fce4e4; color:#c62828; border-left:4px solid #c62828; }
 .dispatch-box { background:#f9fdf9; border:1.5px solid #c8e6c9; border-radius:10px; padding:20px; }
 .dispatch-box p { font-size:13px; color:#555; margin-bottom:12px; }
+.search-box { display:flex; gap:10px; margin-bottom:16px; }
+.search-box input { flex:1; }
+/* Modal */
+.modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; }
+.modal-overlay.active { display:flex; }
+.modal { background:#fff; border-radius:16px; padding:32px; width:420px; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
+.modal h3 { color:#1a4d2e; margin-bottom:20px; font-size:18px; }
+.modal .form-group { margin-bottom:16px; }
+.modal-btns { display:flex; gap:10px; margin-top:20px; }
+.modal-btns button { flex:1; padding:12px; border-radius:8px; border:none; cursor:pointer; font-size:14px; font-weight:600; }
+.btn-cancel { background:#f5f5f5; color:#666; }
 </style>
 </head>
 <body>
@@ -120,6 +127,27 @@ input:focus { border-color:#1a4d2e; }
   <div>
     <span>Olá, {{ usuario }}!</span>
     <a href="/admin/logout">Sair</a>
+  </div>
+</div>
+
+<!-- Modal de Edição -->
+<div class="modal-overlay" id="modalEditar">
+  <div class="modal">
+    <h3>✏️ Editar Produtor</h3>
+    <form method="POST" id="formEditar" action="/admin/editar/0">
+      <div class="form-group">
+        <label>Nome completo</label>
+        <input type="text" name="nome" id="editNome" required>
+      </div>
+      <div class="form-group">
+        <label>WhatsApp (com DDD, sem +55)</label>
+        <input type="text" name="whatsapp" id="editWhatsapp" required>
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-cancel" onclick="fecharModal()">Cancelar</button>
+        <button type="submit" class="btn-primary">Salvar alterações</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -144,9 +172,7 @@ input:focus { border-color:#1a4d2e; }
   </div>
 
   <div class="card">
-    <div class="card-title">
-      📤 Disparar relatório agora
-    </div>
+    <div class="card-title">📤 Disparar relatório agora</div>
     <div class="dispatch-box">
       <p>Envia o relatório com as cotações atuais para todos os produtores ativos imediatamente.</p>
       <form method="POST" action="/admin/disparar">
@@ -156,9 +182,7 @@ input:focus { border-color:#1a4d2e; }
   </div>
 
   <div class="card">
-    <div class="card-title">
-      ➕ Adicionar produtor manualmente
-    </div>
+    <div class="card-title">➕ Adicionar produtor manualmente</div>
     <form method="POST" action="/admin/adicionar">
       <div class="form-row">
         <div class="form-group">
@@ -179,6 +203,16 @@ input:focus { border-color:#1a4d2e; }
       👥 Produtores cadastrados
       <span style="font-size:13px; color:#888; font-weight:400;">{{ total }} no total</span>
     </div>
+
+    <!-- Campo de busca -->
+    <form method="GET" action="/admin/painel" class="search-box">
+      <input type="text" name="busca" placeholder="🔍 Buscar por nome ou número..." value="{{ busca }}">
+      <button type="submit" class="btn btn-primary">Buscar</button>
+      {% if busca %}
+      <a href="/admin/painel" class="btn btn-danger">Limpar</a>
+      {% endif %}
+    </form>
+
     <table>
       <thead>
         <tr>
@@ -186,7 +220,7 @@ input:focus { border-color:#1a4d2e; }
           <th>Nome</th>
           <th>WhatsApp</th>
           <th>Cadastro</th>
-          <th>Msgs enviadas</th>
+          <th>Msgs</th>
           <th>Status</th>
           <th>Ações</th>
         </tr>
@@ -206,7 +240,8 @@ input:focus { border-color:#1a4d2e; }
             <span class="badge badge-inativo">Inativo</span>
             {% endif %}
           </td>
-          <td style="display:flex; gap:8px;">
+          <td style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="btn btn-edit" onclick="abrirEditar({{ p[0] }}, '{{ p[1] }}', '{{ p[2] }}')">✏️ Editar</button>
             <form method="POST" action="/admin/toggle/{{ p[0] }}">
               <button class="btn {% if p[3] == 1 %}btn-danger{% else %}btn-success{% endif %}">
                 {% if p[3] == 1 %}Pausar{% else %}Ativar{% endif %}
@@ -218,6 +253,9 @@ input:focus { border-color:#1a4d2e; }
           </td>
         </tr>
         {% endfor %}
+        {% if not produtores %}
+        <tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px;">Nenhum produtor encontrado.</td></tr>
+        {% endif %}
       </tbody>
     </table>
   </div>
@@ -235,6 +273,21 @@ input:focus { border-color:#1a4d2e; }
     {% endif %}
   </div>
 </div>
+
+<script>
+function abrirEditar(id, nome, whatsapp) {
+    document.getElementById('editNome').value = nome;
+    document.getElementById('editWhatsapp').value = whatsapp;
+    document.getElementById('formEditar').action = '/admin/editar/' + id;
+    document.getElementById('modalEditar').classList.add('active');
+}
+function fecharModal() {
+    document.getElementById('modalEditar').classList.remove('active');
+}
+document.getElementById('modalEditar').addEventListener('click', function(e) {
+    if (e.target === this) fecharModal();
+});
+</script>
 </body>
 </html>
 """
@@ -306,14 +359,15 @@ def logout():
 def painel():
     if "usuario" not in session:
         return redirect("/admin/login")
-    produtores = get_produtores()
+    busca = request.args.get("busca", "")
+    produtores = get_produtores(busca)
     ativos, total, msgs, logs = get_stats()
     msg = request.args.get("msg")
     msg_tipo = request.args.get("tipo", "success")
     return render_template_string(PAINEL_HTML,
         produtores=produtores, ativos=ativos, total=total,
         msgs=msgs, logs=logs, usuario=session["usuario"],
-        msg=msg, msg_tipo=msg_tipo)
+        msg=msg, msg_tipo=msg_tipo, busca=busca)
 
 @app.route("/adicionar", methods=["POST"])
 def adicionar():
@@ -333,6 +387,24 @@ def adicionar():
     except:
         return redirect("/admin/painel?msg=Erro:+WhatsApp+já+cadastrado.&tipo=error")
 
+@app.route("/editar/<int:id>", methods=["POST"])
+def editar(id):
+    if "usuario" not in session:
+        return redirect("/admin/login")
+    nome = request.form.get("nome","").strip()
+    whatsapp = request.form.get("whatsapp","").strip().replace(" ","").replace("-","")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("UPDATE produtores SET nome=?, whatsapp=? WHERE id=?", (nome, whatsapp, id))
+        c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)",
+                  ("Editado", f"{nome} — {whatsapp}"))
+        conn.commit()
+        conn.close()
+        return redirect("/admin/painel?msg=Produtor+atualizado+com+sucesso!&tipo=success")
+    except Exception as e:
+        return redirect(f"/admin/painel?msg=Erro+ao+editar:+{str(e)}&tipo=error")
+
 @app.route("/toggle/<int:id>", methods=["POST"])
 def toggle(id):
     if "usuario" not in session:
@@ -344,8 +416,7 @@ def toggle(id):
     novo = 0 if row[0] == 1 else 1
     c.execute("UPDATE produtores SET ativo=? WHERE id=?", (novo, id))
     status = "Ativado" if novo == 1 else "Pausado"
-    c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)",
-              (status, row[1]))
+    c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)", (status, row[1]))
     conn.commit()
     conn.close()
     return redirect("/admin/painel?msg=Status+atualizado!&tipo=success")
@@ -357,10 +428,12 @@ def remover(id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT nome FROM produtores WHERE id=?", (id,))
-    nome = c.fetchone()[0]
+    row = c.fetchone()
+    if not row:
+        return redirect("/admin/painel?msg=Produtor+não+encontrado.&tipo=error")
+    nome = row[0]
     c.execute("DELETE FROM produtores WHERE id=?", (id,))
-    c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)",
-              ("Removido", nome))
+    c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)", ("Removido", nome))
     conn.commit()
     conn.close()
     return redirect("/admin/painel?msg=Produtor+removido.&tipo=success")
@@ -371,7 +444,6 @@ def disparar():
         return redirect("/admin/login")
     try:
         import sys
-        import os
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from agropulse import enviar_relatorio
         import threading
@@ -386,6 +458,7 @@ def disparar():
         return redirect("/admin/painel?msg=Relatório+enviado!&tipo=success")
     except Exception as e:
         return redirect(f"/admin/painel?msg=Erro:+{str(e)}&tipo=error")
+
 if __name__ == "__main__":
     init_db()
     print("🎛️ Painel rodando em: http://localhost:5001")
