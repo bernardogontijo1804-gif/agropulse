@@ -48,6 +48,88 @@ def webhook_receber():
 def redirecionar_admin():
     return redirect("/admin/login")
 
+@formulario_app.route("/zapi-webhook", methods=["POST"])
+def zapi_webhook():
+    """
+    Recebe eventos do Z-API quando alguém manda mensagem para a AgroPulse.
+    Se for mensagem de ativação de cadastro, responde com boas-vindas.
+    """
+    import requests as req
+    data = request.get_json(silent=True)
+    if not data:
+        return "OK", 200
+
+    print(f"📩 Z-API Webhook: {json.dumps(data)[:300]}")
+
+    try:
+        # Só processa mensagens recebidas (não as enviadas por nós)
+        if data.get("fromMe") == True:
+            return "OK", 200
+
+        # Pega o número e texto da mensagem
+        phone = data.get("phone", "")
+        texto = data.get("text", {}).get("message", "") if isinstance(data.get("text"), dict) else ""
+
+        if not phone or not texto:
+            return "OK", 200
+
+        # Normaliza o número (remove @s.whatsapp.net se vier assim)
+        numero = phone.replace("@s.whatsapp.net", "").replace("+", "").strip()
+
+        # Verifica se é mensagem de ativação de cadastro
+        palavras_ativacao = ["cadastrar", "relatório", "relatorio", "cotações", "cotacoes", "agropulse"]
+        eh_ativacao = any(p in texto.lower() for p in palavras_ativacao)
+
+        if not eh_ativacao:
+            return "OK", 200
+
+        # Busca o produtor no banco pelo número
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        numero_sem55 = numero[2:] if numero.startswith("55") else numero
+        c.execute("SELECT nome FROM produtores WHERE whatsapp LIKE ?", (f"%{numero_sem55}%",))
+        row = c.fetchone()
+        conn.close()
+
+        nome = row[0] if row else "Produtor"
+
+        # Monta e envia mensagem de boas-vindas
+        zapi_instance    = os.environ.get("ZAPI_INSTANCE_ID", "")
+        zapi_token       = os.environ.get("ZAPI_TOKEN", "")
+        zapi_client_token = os.environ.get("ZAPI_CLIENT_TOKEN", "")
+
+        mensagem_bv = (
+            f"🌾 Olá, *{nome}*! Seja bem-vindo à *AgroPulse*! ✅\n\n"
+            f"Seu cadastro está *ativo* e você já vai receber os relatórios diários!\n\n"
+            f"Todo dia às *18h* você receberá:\n"
+            f"📊 Cotações da Bolsa de Chicago\n"
+            f"💵 Câmbio do dia\n"
+            f"🚢 Preços nos portos brasileiros\n"
+            f"🤖 Análise gerada por Inteligência Artificial\n\n"
+            f"_AgroPulse AI — Informação que vale dinheiro_ 💰"
+        )
+
+        url = f"https://api.z-api.io/instances/{zapi_instance}/token/{zapi_token}/send-text"
+        req.post(url,
+            headers={"Content-Type": "application/json", "Client-Token": zapi_client_token},
+            json={"phone": numero, "message": mensagem_bv},
+            timeout=10)
+
+        # Registra no log
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)",
+                  ("Boas-vindas enviada", f"{nome} — {numero}"))
+        conn.commit()
+        conn.close()
+
+        print(f"✅ Boas-vindas enviada para {nome} ({numero})")
+
+    except Exception as e:
+        print(f"❌ Erro no zapi-webhook: {e}")
+
+    return "OK", 200
+
 @formulario_app.route("/teste-envio")
 def teste_envio():
     import agropulse as ag
