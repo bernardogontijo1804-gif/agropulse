@@ -100,7 +100,7 @@ def buscar_precos():
     soja_chicago_cents = precos.get("Soja", {}).get("valor", 1085.0)
 
     # Converter commodities de cents/bushel para dólares/bushel
-    for nome in ["Soja", "Milho", "Trigo", "Cafe", "Algodao", "Sorgo"]:
+    for nome in ["Soja", "Milho", "Trigo", "Cafe", "Algodao"]:
         if nome in precos:
             precos[nome]["valor"]  = round(precos[nome]["valor"]  / 100, 2)
             precos[nome]["maxima"] = round(precos[nome]["maxima"] / 100, 2)
@@ -120,46 +120,51 @@ def buscar_precos():
     variacao_soja = precos.get("Soja", {}).get("variacao", 0)
     variacao_milho = precos.get("Milho", {}).get("variacao", 0)
 
-    # Portos brasileiros — Soja (R$/saca)
+    # Portos brasileiros — Soja (R$/saca 60kg)
     precos["Soja Paranagua"] = {
         "valor":   round(soja_saca_reais * 1.025, 2),
         "variacao":variacao_soja,
-        "maxima":  round(soja_saca_reais * 1.035, 2),
-        "minima":  round(soja_saca_reais * 1.015, 2),
     }
     precos["Soja Tubarao"] = {
         "valor":   round(soja_saca_reais * 1.015, 2),
         "variacao":variacao_soja,
-        "maxima":  round(soja_saca_reais * 1.025, 2),
-        "minima":  round(soja_saca_reais * 1.005, 2),
     }
     precos["Soja Barcarena"] = {
         "valor":   round(soja_saca_reais * 1.010, 2),
         "variacao":variacao_soja,
-        "maxima":  round(soja_saca_reais * 1.020, 2),
-        "minima":  round(soja_saca_reais * 1.000, 2),
     }
     precos["Soja Sao Luis"] = {
         "valor":   round(soja_saca_reais * 1.008, 2),
         "variacao":variacao_soja,
-        "maxima":  round(soja_saca_reais * 1.018, 2),
-        "minima":  round(soja_saca_reais * 0.998, 2),
     }
 
-    # Portos brasileiros — Milho (R$/saca)
+    # Portos brasileiros — Milho (R$/saca 60kg)
     if milho_saca_reais > 0:
         precos["Milho Paranagua"] = {
             "valor":   round(milho_saca_reais * 1.020, 2),
             "variacao":variacao_milho,
-            "maxima":  round(milho_saca_reais * 1.030, 2),
-            "minima":  round(milho_saca_reais * 1.010, 2),
+        }
+        precos["Milho Tubarao"] = {
+            "valor":   round(milho_saca_reais * 1.010, 2),
+            "variacao":variacao_milho,
         }
         precos["Milho Barcarena"] = {
             "valor":   round(milho_saca_reais * 1.005, 2),
             "variacao":variacao_milho,
-            "maxima":  round(milho_saca_reais * 1.015, 2),
-            "minima":  round(milho_saca_reais * 0.995, 2),
         }
+        precos["Milho Sao Luis"] = {
+            "valor":   round(milho_saca_reais * 1.000, 2),
+            "variacao":variacao_milho,
+        }
+
+    # Sorgo nos portos — estimado como 85% do milho (padrão de mercado)
+    if milho_saca_reais > 0:
+        sorgo_base = milho_saca_reais * 0.85
+        variacao_sorgo = variacao_milho
+        precos["Sorgo Paranagua"] = {"valor": round(sorgo_base * 1.020, 2), "variacao": variacao_sorgo}
+        precos["Sorgo Tubarao"]   = {"valor": round(sorgo_base * 1.010, 2), "variacao": variacao_sorgo}
+        precos["Sorgo Barcarena"] = {"valor": round(sorgo_base * 1.005, 2), "variacao": variacao_sorgo}
+        precos["Sorgo Sao Luis"]  = {"valor": round(sorgo_base * 1.000, 2), "variacao": variacao_sorgo}
 
     return precos
 
@@ -200,10 +205,9 @@ Não use markdown, asteriscos ou formatação especial."""
 def montar_mensagem(precos, resumo_ia):
     data_hoje  = datetime.now().strftime("%d/%m/%Y")
 
-    chicago       = ["Soja", "Milho", "Sorgo", "Trigo", "Cafe", "Algodao"]
+    chicago       = ["Soja", "Milho", "Trigo", "Cafe", "Algodao"]
     petroleo      = ["Petroleo WTI", "Petroleo Brent"]
-    portos_soja   = ["Soja Paranagua", "Soja Tubarao", "Soja Barcarena", "Soja Sao Luis"]
-    portos_milho  = ["Milho Paranagua", "Milho Barcarena"]
+
 
     msg = f"""🌾 *AGROPULSE — Fechamento do Mercado*
 📅 {data_hoje}
@@ -231,24 +235,21 @@ def montar_mensagem(precos, resumo_ia):
         # Dólar com 4 casas decimais
         msg  += f"\n*💵 DÓLAR:* R$ {dolar['valor']:.4f} ({sinal}{dolar['variacao']:.2f}%)\n"
 
-    msg += f"\n*🚢 PORTOS BRASILEIROS — Soja (R$/saca)*\n"
-    for nome in portos_soja:
-        if nome in precos:
-            dados = precos[nome]
-            emoji = "📈" if dados["variacao"] > 0 else "📉"
-            sinal = "+" if dados["variacao"] > 0 else ""
-            porto = nome.replace("Soja ", "")
-            msg  += f"{emoji} *{porto}:* R$ {dados['valor']:.2f}/saca ({sinal}{dados['variacao']:.2f}%)\n"
+    portos_nomes = ["Paranagua", "Tubarao", "Barcarena", "Sao Luis"]
+    culturas_porto = [("Soja", "🌱"), ("Milho", "🌽"), ("Sorgo", "🌾")]
 
-    if any(p in precos for p in portos_milho):
-        msg += f"\n*🚢 PORTOS BRASILEIROS — Milho (R$/saca)*\n"
-        for nome in portos_milho:
-            if nome in precos:
-                dados = precos[nome]
+    msg += f"\n*🚢 PORTOS BRASILEIROS (R$/saca)*\n"
+    for porto in portos_nomes:
+        linhas = []
+        for cultura, emoji_cultura in culturas_porto:
+            chave = f"{cultura} {porto}"
+            if chave in precos:
+                dados = precos[chave]
                 emoji = "📈" if dados["variacao"] > 0 else "📉"
                 sinal = "+" if dados["variacao"] > 0 else ""
-                porto = nome.replace("Milho ", "")
-                msg  += f"{emoji} *{porto}:* R$ {dados['valor']:.2f}/saca ({sinal}{dados['variacao']:.2f}%)\n"
+                linhas.append(f"  {emoji} {cultura}: R$ {dados['valor']:.2f}/sc ({sinal}{dados['variacao']:.2f}%)")
+        if linhas:
+            msg += f"\n📍 *{porto}*\n" + "\n".join(linhas) + "\n"
 
     msg += f"""
 *🤖 Análise do Dia:*
