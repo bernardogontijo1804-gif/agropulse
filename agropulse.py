@@ -26,29 +26,17 @@ app = Flask(__name__)
 
 @app.route("/webhook", methods=["GET"])
 def webhook_verificar():
-    """
-    A Meta chama esta rota para confirmar que o servidor é válido.
-    Ela envia hub.mode, hub.verify_token e hub.challenge.
-    Se o token bater, devolvemos o challenge e a Meta confirma a conexão.
-    """
     mode      = request.args.get("hub.mode")
     token     = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
-
     if mode == "subscribe" and token == WEBHOOK_VERIFY_TOKEN:
         print("✅ Webhook verificado com sucesso pela Meta!")
         return challenge, 200
-
     print("❌ Falha na verificação do webhook — token incorreto.")
     return "Forbidden", 403
 
-
 @app.route("/webhook", methods=["POST"])
 def webhook_receber():
-    """
-    Recebe notificações da Meta (mensagens recebidas, status de entrega, etc.)
-    Por ora apenas registra no log — pode expandir para responder automaticamente.
-    """
     data = request.get_json(silent=True)
     if data:
         print(f"📩 Evento recebido da Meta: {json.dumps(data, indent=2)}")
@@ -89,38 +77,82 @@ def buscar_precos():
                 anterior = hist["Close"].iloc[-2]
                 variacao = ((atual - anterior) / anterior) * 100
                 precos[nome] = {
-                    "valor":   round(atual, 2),
+                    "valor":   round(atual, 4),  # 4 casas para ter precisão
                     "variacao":round(variacao, 2),
-                    "maxima":  round(hist["High"].iloc[-1], 2),
-                    "minima":  round(hist["Low"].iloc[-1],  2),
+                    "maxima":  round(hist["High"].iloc[-1], 4),
+                    "minima":  round(hist["Low"].iloc[-1],  4),
                 }
-        except:
-            pass
+        except Exception as e:
+            print(f"Erro ao buscar {nome}: {e}")
 
-    dolar         = precos.get("Dolar", {}).get("valor", 5.20)
-    soja_chicago  = precos.get("Soja",  {}).get("valor", 1085)
+    # Dólar com 4 casas decimais
+    dolar = precos.get("Dolar", {}).get("valor", 5.2000)
 
+    # Soja em Chicago (vem em cents/bushel, dividir por 100)
+    soja_chicago_cents = precos.get("Soja", {}).get("valor", 1085.0)
+
+    # Converter commodities de cents/bushel para dólares/bushel
     for nome in ["Soja", "Milho", "Trigo", "Cafe", "Algodao"]:
         if nome in precos:
             precos[nome]["valor"]  = round(precos[nome]["valor"]  / 100, 2)
             precos[nome]["maxima"] = round(precos[nome]["maxima"] / 100, 2)
             precos[nome]["minima"] = round(precos[nome]["minima"] / 100, 2)
 
-    soja_chicago_real = soja_chicago / 100
-    soja_saca         = round((soja_chicago_real / 27.2) * 60 * dolar, 2)
+    # Calcular preço da soja em reais/saca (60kg)
+    # 1 bushel = 27.2kg → saca 60kg = 60/27.2 bushels
+    soja_chicago_dolar = soja_chicago_cents / 100
+    soja_saca_reais = round((soja_chicago_dolar / 27.2) * 60 * dolar, 2)
 
+    # Calcular preço do milho em reais/saca (60kg)
+    milho_chicago_cents = precos.get("Milho", {}).get("valor", 0) * 100  # já dividimos, então multiplicamos de volta
+    milho_chicago_dolar = milho_chicago_cents / 100 if milho_chicago_cents else precos.get("Milho", {}).get("valor", 4.5)
+    # Milho: 1 bushel = 25.4kg → saca 60kg = 60/25.4 bushels
+    milho_saca_reais = round((milho_chicago_dolar / 25.4) * 60 * dolar, 2) if "Milho" in precos else 0
+
+    variacao_soja = precos.get("Soja", {}).get("variacao", 0)
+    variacao_milho = precos.get("Milho", {}).get("variacao", 0)
+
+    # Portos brasileiros — Soja (R$/saca)
     precos["Soja Paranagua"] = {
-        "valor":   round(soja_saca * 1.02, 2),
-        "variacao":precos.get("Soja", {}).get("variacao", 0),
-        "maxima":  round(soja_saca * 1.03, 2),
-        "minima":  round(soja_saca * 1.01, 2),
+        "valor":   round(soja_saca_reais * 1.025, 2),
+        "variacao":variacao_soja,
+        "maxima":  round(soja_saca_reais * 1.035, 2),
+        "minima":  round(soja_saca_reais * 1.015, 2),
     }
     precos["Soja Tubarao"] = {
-        "valor":   round(soja_saca * 1.01, 2),
-        "variacao":precos.get("Soja", {}).get("variacao", 0),
-        "maxima":  round(soja_saca * 1.02, 2),
-        "minima":  round(soja_saca * 1.00, 2),
+        "valor":   round(soja_saca_reais * 1.015, 2),
+        "variacao":variacao_soja,
+        "maxima":  round(soja_saca_reais * 1.025, 2),
+        "minima":  round(soja_saca_reais * 1.005, 2),
     }
+    precos["Soja Barcarena"] = {
+        "valor":   round(soja_saca_reais * 1.010, 2),
+        "variacao":variacao_soja,
+        "maxima":  round(soja_saca_reais * 1.020, 2),
+        "minima":  round(soja_saca_reais * 1.000, 2),
+    }
+    precos["Soja Sao Luis"] = {
+        "valor":   round(soja_saca_reais * 1.008, 2),
+        "variacao":variacao_soja,
+        "maxima":  round(soja_saca_reais * 1.018, 2),
+        "minima":  round(soja_saca_reais * 0.998, 2),
+    }
+
+    # Portos brasileiros — Milho (R$/saca)
+    if milho_saca_reais > 0:
+        precos["Milho Paranagua"] = {
+            "valor":   round(milho_saca_reais * 1.020, 2),
+            "variacao":variacao_milho,
+            "maxima":  round(milho_saca_reais * 1.030, 2),
+            "minima":  round(milho_saca_reais * 1.010, 2),
+        }
+        precos["Milho Barcarena"] = {
+            "valor":   round(milho_saca_reais * 1.005, 2),
+            "variacao":variacao_milho,
+            "maxima":  round(milho_saca_reais * 1.015, 2),
+            "minima":  round(milho_saca_reais * 0.995, 2),
+        }
+
     return precos
 
 
@@ -128,11 +160,11 @@ def buscar_precos():
 # GERAÇÃO DO RESUMO COM IA
 # ========================================
 def gerar_resumo_ia(precos):
-    cliente     = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    cliente = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     texto_precos = ""
     for commodity, dados in precos.items():
         sinal = "+" if dados["variacao"] > 0 else ""
-        texto_precos += f"{commodity}: US$ {dados['valor']} ({sinal}{dados['variacao']}%)\n"
+        texto_precos += f"{commodity}: {dados['valor']} ({sinal}{dados['variacao']}%)\n"
 
     resposta = cliente.messages.create(
         model      ="claude-sonnet-4-6",
@@ -140,14 +172,15 @@ def gerar_resumo_ia(precos):
         messages   =[{
             "role"   : "user",
             "content": f"""Você é um analista do agronegócio brasileiro.
-Com base nos preços abaixo da Bolsa de Chicago, escreva um resumo
-de mercado em 2-3 frases simples e diretas para produtores rurais.
+Com base nos preços abaixo, escreva um resumo de mercado em 2-3 frases 
+simples e diretas para produtores rurais brasileiros.
 Seja objetivo e mencione os destaques do dia.
 
 Preços de hoje:
 {texto_precos}
 
-Responda em português, de forma clara e sem jargões complexos."""
+Responda em português, de forma clara e sem jargões complexos.
+Não use markdown, asteriscos ou formatação especial."""
         }]
     )
     return resposta.content[0].text
@@ -160,9 +193,10 @@ def montar_mensagem(precos, resumo_ia):
     data_hoje  = datetime.now().strftime("%d/%m/%Y")
     hora_agora = datetime.now().strftime("%H:%M")
 
-    chicago  = ["Soja", "Milho", "Trigo", "Cafe", "Algodao"]
-    petroleo = ["Petroleo WTI", "Petroleo Brent"]
-    portos   = ["Soja Paranagua", "Soja Tubarao"]
+    chicago       = ["Soja", "Milho", "Trigo", "Cafe", "Algodao"]
+    petroleo      = ["Petroleo WTI", "Petroleo Brent"]
+    portos_soja   = ["Soja Paranagua", "Soja Tubarao", "Soja Barcarena", "Soja Sao Luis"]
+    portos_milho  = ["Milho Paranagua", "Milho Barcarena"]
 
     msg = f"""🌾 *AGROPULSE — Fechamento do Mercado*
 📅 {data_hoje} às {hora_agora}
@@ -174,7 +208,7 @@ def montar_mensagem(precos, resumo_ia):
             dados = precos[nome]
             emoji = "📈" if dados["variacao"] > 0 else "📉"
             sinal = "+" if dados["variacao"] > 0 else ""
-            msg  += f"{emoji} *{nome}:* US$ {dados['valor']} ({sinal}{dados['variacao']}%)\n"
+            msg  += f"{emoji} *{nome}:* US$ {dados['valor']:.2f} ({sinal}{dados['variacao']:.2f}%)\n"
 
     msg += f"\n*🛢️ PETRÓLEO*\n"
     for nome in petroleo:
@@ -182,20 +216,32 @@ def montar_mensagem(precos, resumo_ia):
             dados = precos[nome]
             emoji = "📈" if dados["variacao"] > 0 else "📉"
             sinal = "+" if dados["variacao"] > 0 else ""
-            msg  += f"{emoji} *{nome}:* US$ {dados['valor']} ({sinal}{dados['variacao']}%)\n"
+            msg  += f"{emoji} *{nome}:* US$ {dados['valor']:.2f} ({sinal}{dados['variacao']:.2f}%)\n"
 
     if "Dolar" in precos:
         dolar = precos["Dolar"]
         sinal = "+" if dolar["variacao"] > 0 else ""
-        msg  += f"\n*💵 DÓLAR:* R$ {dolar['valor']} ({sinal}{dolar['variacao']}%)\n"
+        # Dólar com 4 casas decimais
+        msg  += f"\n*💵 DÓLAR:* R$ {dolar['valor']:.4f} ({sinal}{dolar['variacao']:.2f}%)\n"
 
-    msg += f"\n*🚢 PORTOS BRASILEIROS (Soja)*\n"
-    for nome in portos:
+    msg += f"\n*🚢 PORTOS BRASILEIROS — Soja (R$/saca)*\n"
+    for nome in portos_soja:
         if nome in precos:
             dados = precos[nome]
             emoji = "📈" if dados["variacao"] > 0 else "📉"
             sinal = "+" if dados["variacao"] > 0 else ""
-            msg  += f"{emoji} *{nome}:* R$ {dados['valor']}/saca ({sinal}{dados['variacao']}%)\n"
+            porto = nome.replace("Soja ", "")
+            msg  += f"{emoji} *{porto}:* R$ {dados['valor']:.2f}/saca ({sinal}{dados['variacao']:.2f}%)\n"
+
+    if any(p in precos for p in portos_milho):
+        msg += f"\n*🚢 PORTOS BRASILEIROS — Milho (R$/saca)*\n"
+        for nome in portos_milho:
+            if nome in precos:
+                dados = precos[nome]
+                emoji = "📈" if dados["variacao"] > 0 else "📉"
+                sinal = "+" if dados["variacao"] > 0 else ""
+                porto = nome.replace("Milho ", "")
+                msg  += f"{emoji} *{porto}:* R$ {dados['valor']:.2f}/saca ({sinal}{dados['variacao']:.2f}%)\n"
 
     msg += f"""
 *🤖 Análise do Dia:*
@@ -209,10 +255,6 @@ _AgroPulse AI — Informação que vale dinheiro_ 💰"""
 # ENVIO PELO WHATSAPP (Z-API)
 # ========================================
 def enviar_whatsapp_zapi(numero, mensagem):
-    """
-    Envia mensagem de texto via Z-API.
-    O número deve estar no formato: 5538999999999 (com 55 + DDD + número)
-    """
     url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
     headers = {
         "Content-Type": "application/json",
@@ -242,7 +284,6 @@ def enviar_whatsapp(mensagem):
 
     for usuario in produtores:
         try:
-            # Garante formato correto: 55 + DDD + número
             numero = usuario["whatsapp"].strip().replace(" ", "").replace("-", "")
             if not numero.startswith("55"):
                 numero = "55" + numero
