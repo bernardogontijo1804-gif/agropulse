@@ -57,56 +57,40 @@ def webhook_receber():
 # ========================================
 def buscar_precos():
     import yfinance as yf
+    import time as time_module
 
-    simbolos_map = {
-        "ZS=F":  "Soja",
-        "ZC=F":  "Milho",
-        "ZW=F":  "Trigo",
-        "KC=F":  "Cafe",
-        "CT=F":  "Algodao",
-        "CL=F":  "Petroleo WTI",
-        "BZ=F":  "Petroleo Brent",
-        "BRL=X": "Dolar",
+    simbolos = {
+        "Soja":          "ZS=F",
+        "Milho":         "ZC=F",
+        "Trigo":         "ZW=F",
+        "Cafe":          "KC=F",
+        "Algodao":       "CT=F",
+        "Petroleo WTI":  "CL=F",
+        "Petroleo Brent":"BZ=F",
+        "Dolar":         "BRL=X",
     }
-
     precos = {}
-    lista_simbolos = list(simbolos_map.keys())
-
-    try:
-        # Uma única requisição para todos os símbolos
-        dados = yf.download(
-            lista_simbolos,
-            period="5d",
-            auto_adjust=True,
-            progress=False,
-            threads=False
-        )
-        close = dados["Close"].dropna(how="all")
-        high  = dados["High"].dropna(how="all")
-        low   = dados["Low"].dropna(how="all")
-
-        for simbolo, nome in simbolos_map.items():
-            try:
-                serie = close[simbolo].dropna()
-                if len(serie) >= 2:
-                    atual    = float(serie.iloc[-1])
-                    anterior = float(serie.iloc[-2])
-                    variacao = ((atual - anterior) / anterior) * 100
-                    maxima   = float(high[simbolo].dropna().iloc[-1])
-                    minima   = float(low[simbolo].dropna().iloc[-1])
-                    precos[nome] = {
-                        "valor":    round(atual, 4),
-                        "variacao": round(variacao, 2),
-                        "maxima":   round(maxima, 4),
-                        "minima":   round(minima, 4),
-                    }
-                    print(f"✅ {nome}: {atual:.4f}")
-                else:
-                    print(f"⚠️ {nome}: dados insuficientes")
-            except Exception as e:
-                print(f"⚠️ {nome}: {e}")
-    except Exception as e:
-        print(f"❌ Erro no download em lote: {e}")
+    for nome, simbolo in simbolos.items():
+        try:
+            time_module.sleep(1)  # Delay de 1s entre requisições para evitar rate limit
+            ticker = yf.Ticker(simbolo)
+            hist   = ticker.history(period="5d")
+            hist   = hist.dropna(subset=["Close"])
+            if len(hist) >= 2:
+                atual    = float(hist["Close"].iloc[-1])
+                anterior = float(hist["Close"].iloc[-2])
+                variacao = ((atual - anterior) / anterior) * 100
+                precos[nome] = {
+                    "valor":   round(atual, 4),
+                    "variacao":round(variacao, 2),
+                    "maxima":  round(float(hist["High"].iloc[-1]), 4),
+                    "minima":  round(float(hist["Low"].iloc[-1]),  4),
+                }
+                print(f"✅ {nome}: {atual:.4f}")
+            else:
+                print(f"⚠️ {nome}: dados insuficientes")
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar {nome}: {e}")
 
     # Dólar com 4 casas decimais
     dolar = precos.get("Dolar", {}).get("valor", 5.2000)
