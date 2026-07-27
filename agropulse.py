@@ -65,6 +65,7 @@ def buscar_precos():
         "Trigo":         "ZW=F",
         "Cafe":          "KC=F",
         "Algodao":       "CT=F",
+        "Sorgo":         "GF=F",
         "Petroleo WTI":  "CL=F",
         "Petroleo Brent":"BZ=F",
         "Dolar":         "BRL=X",
@@ -99,7 +100,7 @@ def buscar_precos():
     soja_chicago_cents = precos.get("Soja", {}).get("valor", 1085.0)
 
     # Converter commodities de cents/bushel para dólares/bushel
-    for nome in ["Soja", "Milho", "Trigo", "Cafe", "Algodao"]:
+    for nome in ["Soja", "Milho", "Trigo", "Cafe", "Algodao", "Sorgo"]:
         if nome in precos:
             precos[nome]["valor"]  = round(precos[nome]["valor"]  / 100, 2)
             precos[nome]["maxima"] = round(precos[nome]["maxima"] / 100, 2)
@@ -198,15 +199,14 @@ Não use markdown, asteriscos ou formatação especial."""
 # ========================================
 def montar_mensagem(precos, resumo_ia):
     data_hoje  = datetime.now().strftime("%d/%m/%Y")
-    hora_agora = datetime.now().strftime("%H:%M")
 
-    chicago       = ["Soja", "Milho", "Trigo", "Cafe", "Algodao"]
+    chicago       = ["Soja", "Milho", "Sorgo", "Trigo", "Cafe", "Algodao"]
     petroleo      = ["Petroleo WTI", "Petroleo Brent"]
     portos_soja   = ["Soja Paranagua", "Soja Tubarao", "Soja Barcarena", "Soja Sao Luis"]
     portos_milho  = ["Milho Paranagua", "Milho Barcarena"]
 
     msg = f"""🌾 *AGROPULSE — Fechamento do Mercado*
-📅 {data_hoje} às {hora_agora}
+📅 {data_hoje}
 
 *📊 BOLSA DE CHICAGO (CBOT)*\n"""
 
