@@ -130,6 +130,33 @@ def zapi_webhook():
 
     return "OK", 200
 
+@formulario_app.route("/debug-precos")
+def debug_precos():
+    import yfinance as yf
+    simbolos = {
+        "Soja": "ZS=F",
+        "Milho": "ZC=F",
+        "Trigo": "ZW=F",
+        "Cafe": "KC=F",
+        "Algodao": "CT=F",
+        "Petroleo WTI": "CL=F",
+        "Petroleo Brent": "BZ=F",
+        "Dolar": "BRL=X",
+    }
+    resultado = []
+    for nome, simbolo in simbolos.items():
+        try:
+            ticker = yf.Ticker(simbolo)
+            hist = ticker.history(period="2d")
+            if len(hist) >= 2:
+                atual = hist["Close"].iloc[-1]
+                resultado.append(f"{nome} ({simbolo}): {atual:.4f}")
+            else:
+                resultado.append(f"{nome} ({simbolo}): sem dados suficientes")
+        except Exception as e:
+            resultado.append(f"{nome} ({simbolo}): ERRO — {e}")
+    return "<pre style='padding:20px;font-size:14px'>" + "\n".join(resultado) + "</pre>", 200
+
 @formulario_app.route("/teste-envio")
 def teste_envio():
     import agropulse as ag
