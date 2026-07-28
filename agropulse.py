@@ -65,7 +65,6 @@ def buscar_precos():
         "Trigo":         "ZW=F",
         "Cafe":          "KC=F",
         "Algodao":       "CT=F",
-        "Sorgo":         "GF=F",
         "Petroleo WTI":  "CL=F",
         "Petroleo Brent":"BZ=F",
         "Dolar":         "BRL=X",
@@ -96,8 +95,9 @@ def buscar_precos():
     # Dólar com 4 casas decimais
     dolar = precos.get("Dolar", {}).get("valor", 5.2000)
 
-    # Soja em Chicago (vem em cents/bushel, dividir por 100)
-    soja_chicago_cents = precos.get("Soja", {}).get("valor", 1085.0)
+    # Guardar valores em cents ANTES de dividir por 100
+    soja_chicago_cents  = precos.get("Soja",  {}).get("valor", 1085.0)
+    milho_chicago_cents = precos.get("Milho", {}).get("valor", 475.0)
 
     # Converter commodities de cents/bushel para dólares/bushel
     for nome in ["Soja", "Milho", "Trigo", "Cafe", "Algodao"]:
@@ -107,14 +107,12 @@ def buscar_precos():
             precos[nome]["minima"] = round(precos[nome]["minima"] / 100, 2)
 
     # Calcular preço da soja em reais/saca (60kg)
-    # 1 bushel = 27.2kg → saca 60kg = 60/27.2 bushels
+    # cents/bushel → US$/bushel → R$/saca
     soja_chicago_dolar = soja_chicago_cents / 100
     soja_saca_reais = round((soja_chicago_dolar / 27.2) * 60 * dolar, 2)
 
     # Calcular preço do milho em reais/saca (60kg)
-    milho_chicago_cents = precos.get("Milho", {}).get("valor", 0) * 100  # já dividimos, então multiplicamos de volta
-    milho_chicago_dolar = milho_chicago_cents / 100 if milho_chicago_cents else precos.get("Milho", {}).get("valor", 4.5)
-    # Milho: 1 bushel = 25.4kg → saca 60kg = 60/25.4 bushels
+    milho_chicago_dolar = milho_chicago_cents / 100
     milho_saca_reais = round((milho_chicago_dolar / 25.4) * 60 * dolar, 2) if "Milho" in precos else 0
 
     variacao_soja = precos.get("Soja", {}).get("variacao", 0)
