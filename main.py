@@ -186,6 +186,86 @@ def teste_envio():
         resultado.append(f"ERRO: {str(e)}")
     return "<pre style='padding:20px;font-size:13px'>" + "\n".join(resultado) + "</pre>", 200
 
+@formulario_app.route("/backup")
+def backup():
+    """Exporta todos os produtores em JSON para backup manual"""
+    import sqlite3
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT id, nome, whatsapp, ativo, commodities, data_cadastro, mensagens_enviadas FROM produtores ORDER BY id")
+        rows = c.fetchall()
+        conn.close()
+
+        produtores = []
+        for row in rows:
+            produtores.append({
+                "id": row[0],
+                "nome": row[1],
+                "whatsapp": row[2],
+                "ativo": row[3],
+                "commodities": row[4],
+                "data_cadastro": row[5],
+                "mensagens_enviadas": row[6]
+            })
+
+        from flask import Response
+        import json as json_module
+        data_hoje = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        conteudo = json_module.dumps({
+            "backup_data": data_hoje,
+            "total": len(produtores),
+            "produtores": produtores
+        }, ensure_ascii=False, indent=2)
+
+        return Response(
+            conteudo,
+            mimetype="application/json",
+            headers={"Content-Disposition": f"attachment; filename=agropulse_backup_{data_hoje}.json"}
+        )
+    except Exception as e:
+        return f"❌ Erro ao gerar backup: {str(e)}", 500
+
+
+@formulario_app.route("/restaurar", methods=["POST"])
+def restaurar():
+    """Restaura produtores a partir de JSON de backup"""
+    try:
+        data = request.get_json(silent=True)
+        if not data or "produtores" not in data:
+            return "❌ JSON inválido", 400
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        restaurados = 0
+        ignorados = 0
+
+        for p in data["produtores"]:
+            try:
+                c.execute("""INSERT OR IGNORE INTO produtores 
+                    (nome, whatsapp, ativo, commodities, data_cadastro, mensagens_enviadas)
+                    VALUES (?,?,?,?,?,?)""",
+                    (p["nome"], p["whatsapp"], p.get("ativo", 1),
+                     p.get("commodities", '["Soja"]'),
+                     p.get("data_cadastro", ""),
+                     p.get("mensagens_enviadas", 0)))
+                if conn.total_changes > restaurados + ignorados:
+                    restaurados += 1
+                else:
+                    ignorados += 1
+            except:
+                ignorados += 1
+
+        c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)",
+                  ("Backup restaurado", f"{restaurados} produtores restaurados"))
+        conn.commit()
+        conn.close()
+
+        return f"✅ {restaurados} produtores restaurados, {ignorados} ignorados (já existiam).", 200
+    except Exception as e:
+        return f"❌ Erro ao restaurar: {str(e)}", 500
+
+
 @formulario_app.route("/diagnostico")
 def diagnostico():
     import requests as req
