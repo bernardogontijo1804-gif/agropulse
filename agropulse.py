@@ -275,6 +275,15 @@ def enviar_whatsapp_zapi(numero, mensagem):
 
 
 def enviar_whatsapp(mensagem):
+    import random as random_module
+
+    # Verificar horário permitido (8h às 20h)
+    hora_atual = datetime.now().hour
+    if hora_atual < 8 or hora_atual >= 20:
+        print(f"⏰ Fora do horário permitido ({hora_atual}h). Envio cancelado.")
+        print("⏰ Mensagens só são enviadas entre 8h e 20h para evitar banimento.")
+        return
+
     enviados = 0
     falhas   = 0
 
@@ -288,7 +297,10 @@ def enviar_whatsapp(mensagem):
         print(f"Erro ao buscar produtores: {e}")
         produtores = []
 
-    for usuario in produtores:
+    total = len(produtores)
+    print(f"📤 Iniciando envio para {total} produtores...")
+
+    for i, usuario in enumerate(produtores):
         try:
             numero = usuario["whatsapp"].strip().replace(" ", "").replace("-", "")
             if not numero.startswith("55"):
@@ -297,7 +309,7 @@ def enviar_whatsapp(mensagem):
             status, resposta = enviar_whatsapp_zapi(numero, mensagem)
 
             if status == 200:
-                print(f"✅ Enviado para {usuario['nome']} ({numero})")
+                print(f"✅ [{i+1}/{total}] Enviado para {usuario['nome']} ({numero})")
                 try:
                     conn = sqlite3.connect(DB_PATH)
                     c    = conn.cursor()
@@ -309,8 +321,15 @@ def enviar_whatsapp(mensagem):
                     pass
                 enviados += 1
             else:
-                print(f"❌ Falha para {usuario['nome']}: {resposta}")
+                print(f"❌ [{i+1}/{total}] Falha para {usuario['nome']}: {resposta}")
                 falhas += 1
+
+            # Delay aleatório entre envios para parecer mais humano
+            # Entre 8 e 15 segundos entre cada mensagem
+            if i < total - 1:
+                delay = random_module.uniform(8, 15)
+                print(f"⏳ Aguardando {delay:.1f}s antes do próximo envio...")
+                time.sleep(delay)
 
         except Exception as e:
             print(f"❌ Erro ao enviar para {usuario['nome']}: {e}")
