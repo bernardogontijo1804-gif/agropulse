@@ -211,7 +211,8 @@ def backup():
 
         from flask import Response
         import json as json_module
-        data_hoje = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        from datetime import datetime as dt
+        data_hoje = dt.now().strftime("%Y-%m-%d_%H-%M")
         conteudo = json_module.dumps({
             "backup_data": data_hoje,
             "total": len(produtores),
@@ -343,3 +344,4 @@ if __name__ == "__main__":
     print(f"🔗 Webhook:     http://localhost:{port}/webhook")
     print(f"🧪 Teste envio: http://localhost:{port}/teste-envio")
     app.run(debug=False, host="0.0.0.0", port=port)
+    
