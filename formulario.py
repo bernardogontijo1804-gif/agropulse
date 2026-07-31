@@ -128,7 +128,7 @@ FORMULARIO_HTML = """
         </div>
 
         <div class="info">
-            📲 Após o cadastro, você receberá relatórios diários com cotações da Bolsa de Chicago, portos brasileiros e análise de IA — todo dia às 18h no seu WhatsApp.
+            📲 Após o cadastro, você receberá relatórios diários com cotações da Bolsa de Chicago, portos brasileiros e análise gerada por Inteligência Artificial direto no seu WhatsApp.
         </div>
 
         <form method="POST" action="/cadastrar">
@@ -307,7 +307,7 @@ def enviar_boas_vindas(nome, whatsapp):
     mensagem = (
         f"🌾 Olá, {nome}! Bem-vindo à *AgroPulse*!\n\n"
         f"Seu cadastro foi confirmado com sucesso ✅\n\n"
-        f"A partir de hoje você receberá todo dia às *18h* um relatório completo com:\n"
+        f"A partir de hoje você receberá relatórios diários de mercado com:\n"
         f"📊 Cotações da Bolsa de Chicago\n"
         f"💵 Câmbio do dia\n"
         f"🚢 Preços nos portos brasileiros\n"
