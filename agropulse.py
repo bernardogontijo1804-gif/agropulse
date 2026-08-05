@@ -640,7 +640,8 @@ def enviar_relatorio():
         return
 
     # 3. Aguardar 19:00 se ainda for cedo
-    while datetime.now().hour < 19:
+    # Aguarda 22h UTC = 19h Brasília
+    while datetime.now().hour < 22:
         print(f"⏳ Aguardando 19:00 para envio... (agora: {datetime.now().strftime('%H:%M')})")
         time.sleep(60)
 
@@ -666,8 +667,8 @@ def enviar_relatorio():
 if __name__ == "__main__":
     print("🚀 AgroPulse v2.0 iniciado!")
     # Coleta às 18:30, envio após 19:00
-    schedule.every().day.at("18:30").do(enviar_relatorio)
-    print("⏰ Agendado: coleta às 18:30, envio após 19:00 (Brasília)")
+    schedule.every().day.at("21:30").do(enviar_relatorio)  # 21:30 UTC = 18:30 Brasília
+    print("⏰ Agendado: coleta às 18:30 Brasília (21:30 UTC), envio após 19:00 Brasília (22:00 UTC)")
     print("✋ Pressione CTRL+C para parar")
     while True:
         schedule.run_pending()
