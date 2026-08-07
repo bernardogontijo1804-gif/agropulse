@@ -535,11 +535,14 @@ def enviar_whatsapp_zapi(numero: str, mensagem: str) -> tuple[int, dict]:
 def enviar_whatsapp(mensagem: str):
     """Envia relatório para todos os produtores ativos com delay anti-ban."""
 
-    # Horário permitido: 8h–20h (proteção anti-ban)
-    hora = datetime.now().hour
-    if hora < 8 or hora >= 20:
-        print(f"⏰ Fora do horário permitido ({hora}h). Envio cancelado.")
-        registrar_log("Envio cancelado", f"Fora do horário ({hora}h)")
+    # Horário permitido: 11h–23h59 UTC = 8h–20h59 Brasília (proteção anti-ban)
+    # Envio automático ocorre às 22h UTC = 19h Brasília — dentro da janela
+    from datetime import timezone
+    hora_utc = datetime.now(timezone.utc).hour
+    if hora_utc < 11 or hora_utc >= 24:
+        hora_brt = (hora_utc - 3) % 24
+        print(f"⏰ Fora do horário permitido ({hora_brt}h Brasília). Envio cancelado.")
+        registrar_log("Envio cancelado", f"Fora do horário ({hora_brt}h Brasília / {hora_utc}h UTC)")
         return
 
     try:
@@ -639,11 +642,19 @@ def enviar_relatorio():
         registrar_log("Pipeline cancelado — validação", str(erros))
         return
 
-    # 3. Aguardar 19:00 se ainda for cedo
-    # Aguarda 22h UTC = 19h Brasília
-    while datetime.now().hour < 22:
-        print(f"⏳ Aguardando 19:00 para envio... (agora: {datetime.now().strftime('%H:%M')})")
+    # 3. Aguardar 19:00 Brasília = 22:00 UTC
+    from datetime import timezone
+    while True:
+        agora_utc = datetime.now(timezone.utc)
+        hora_utc  = agora_utc.hour
+        # 22:00 UTC = 19:00 Brasília
+        if hora_utc >= 22:
+            break
+        brt_hora = (hora_utc - 3) % 24
+        brt_min  = agora_utc.minute
+        print(f"⏳ Aguardando 19:00 Brasília... (agora {brt_hora:02d}:{brt_min:02d} Brasília / {hora_utc:02d}:{brt_min:02d} UTC)")
         time.sleep(60)
+    print("✅ 19:00 Brasília atingido — iniciando envio!")
 
     # 4. Análise IA
     try:
