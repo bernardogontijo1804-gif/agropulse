@@ -591,9 +591,10 @@ def enviar_whatsapp(mensagem: str):
                 registrar_log("Falha no envio", f"{usuario['nome']} | {numero} | HTTP {status} | {str(resp)[:100]}")
 
             # Delay aleatório anti-ban entre envios
+            # Entre 45s e 75s — simula comportamento humano
             if i < total - 1:
-                delay = random.uniform(10, 18)
-                print(f"⏳ Aguardando {delay:.1f}s...")
+                delay = random.uniform(45, 75)
+                print(f"⏳ Aguardando {delay:.0f}s antes do próximo envio...")
                 time.sleep(delay)
 
         except Exception as e:
