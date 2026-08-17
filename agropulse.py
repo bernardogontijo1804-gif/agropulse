@@ -108,6 +108,79 @@ def registrar_log(evento: str, detalhes: str):
 
 
 # ============================================================
+# COLETA DE PREÇOS REAIS DOS PORTOS — Notícias Agrícolas
+# ============================================================
+def buscar_precos_portos() -> dict:
+    """
+    Busca preços reais dos portos brasileiros via Notícias Agrícolas
+    (fonte: Insoy Commodities e CEPEA/ESALQ).
+    Calcula a média entre as fontes disponíveis para cada porto.
+    Retorna dict com preços médios reais ou vazio se falhar.
+    """
+    import re
+
+    portos_dados = {}
+
+    try:
+        url = "https://www.noticiasagricolas.com.br/cotacoes/soja"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=15)
+
+        if resp.status_code != 200:
+            print(f"⚠️ Notícias Agrícolas retornou HTTP {resp.status_code}")
+            return {}
+
+        texto = resp.text
+
+        # Extrai preços dos portos via regex
+        # Fonte: Insoy Commodities — Porto Paranaguá disponível
+        padroes = [
+            ("Paranagua", r"Porto Paranagu[áa].*?disponível.*?(\d{2,3}[,\.]\d{2})"),
+            ("Paranagua", r"Paranagu[áa].*?(\d{3}[,\.]\d{2})"),
+            ("Rio Grande", r"Porto Rio Grande.*?disponível.*?(\d{2,3}[,\.]\d{2})"),
+            ("Santos",    r"Porto Santos.*?(\d{2,3}[,\.]\d{2})"),
+        ]
+
+        encontrados = {}
+        for nome, padrao in padroes:
+            matches = re.findall(padrao, texto, re.IGNORECASE | re.DOTALL)
+            if matches:
+                for m in matches[:2]:  # pega até 2 valores por porto
+                    valor = float(m.replace(",", "."))
+                    if 100 <= valor <= 300:  # sanidade: preço válido da soja
+                        if nome not in encontrados:
+                            encontrados[nome] = []
+                        encontrados[nome].append(valor)
+
+        # Calcula médias
+        if "Paranagua" in encontrados:
+            portos_dados["Soja Paranagua_real"] = round(sum(encontrados["Paranagua"]) / len(encontrados["Paranagua"]), 2)
+        if "Rio Grande" in encontrados:
+            portos_dados["Soja RioGrande_real"] = round(sum(encontrados["Rio Grande"]) / len(encontrados["Rio Grande"]), 2)
+        if "Santos" in encontrados:
+            portos_dados["Soja Santos_real"] = round(sum(encontrados["Santos"]) / len(encontrados["Santos"]), 2)
+
+        # CEPEA Paranaguá como referência adicional
+        cepea = re.findall(r"Indicador da Soja ESALQ.*?(\d{2,3}[,\.]\d{2})", texto, re.DOTALL)
+        if cepea:
+            valor_cepea = float(cepea[0].replace(",", "."))
+            if 100 <= valor_cepea <= 300:
+                portos_dados["Soja Paranagua_cepea"] = valor_cepea
+
+        if portos_dados:
+            print(f"✅ Preços reais dos portos: {portos_dados}")
+            registrar_log("Portos reais coletados", str(portos_dados))
+        else:
+            print("⚠️ Não foi possível extrair preços reais dos portos")
+
+    except Exception as e:
+        print(f"⚠️ Erro ao buscar portos reais: {e}")
+        registrar_log("Erro busca portos reais", str(e))
+
+    return portos_dados
+
+
+# ============================================================
 # COLETA DE DADOS — yfinance com retry
 # ============================================================
 def buscar_ticker(simbolo: str, tentativas: int = 3, delay_s: float = 2.0) -> dict | None:
@@ -237,18 +310,53 @@ def buscar_precos() -> dict:
             "variacao": variacao,
             "unidade":  "USD/bushel",
         }
-        # Portos: (Chicago + prêmio) × (60 / kg_por_bushel) × dólar
+            # Busca preços reais dos portos
+        portos_reais = buscar_precos_portos()
+
+        # Preço médio real de Paranaguá (média CEPEA + Insoy quando disponíveis)
+        paranagua_real = None
+        vals_paranagua = []
+        if "Soja Paranagua_real" in portos_reais:
+            vals_paranagua.append(portos_reais["Soja Paranagua_real"])
+        if "Soja Paranagua_cepea" in portos_reais:
+            vals_paranagua.append(portos_reais["Soja Paranagua_cepea"])
+        if vals_paranagua:
+            paranagua_real = round(sum(vals_paranagua) / len(vals_paranagua), 2)
+
+        # Portos: usa preço real quando disponível, senão calcula via Chicago
         for porto, premio_usd in PREMIOS_SOJA.items():
-            preco_porto_usd  = atual_usd + premio_usd
-            preco_porto_brl  = (preco_porto_usd / SOJA_KG_POR_BUSHEL) * SACA_KG * dolar_brl
+            preco_porto_usd    = atual_usd + premio_usd
+            preco_porto_brl    = (preco_porto_usd / SOJA_KG_POR_BUSHEL) * SACA_KG * dolar_brl
             anterior_porto_usd = anterior_usd + premio_usd
             anterior_porto_brl = (anterior_porto_usd / SOJA_KG_POR_BUSHEL) * SACA_KG * dolar_brl
-            var_porto = round(((preco_porto_brl - anterior_porto_brl) / anterior_porto_brl) * 100, 2)
+
+            # Usa preço real de Paranaguá como âncora para ajustar os demais portos
+            if paranagua_real and porto == "Paranagua":
+                # Paranaguá: usa média real
+                valor_final = paranagua_real
+                # Calcula variação com base no dia anterior calculado
+                var_porto = round(((valor_final - anterior_porto_brl) / anterior_porto_brl) * 100, 2)
+                fonte = "real"
+            elif paranagua_real:
+                # Outros portos: ajusta proporcionalmente ao preço real de Paranaguá
+                fator = paranagua_real / preco_porto_brl if preco_porto_brl > 0 else 1
+                valor_base = round(preco_porto_brl * fator * (1 - (PREMIOS_SOJA["Paranagua"] - premio_usd) / (PREMIOS_SOJA["Paranagua"] + atual_usd)), 2)
+                # Simplificado: diferença proporcional ao prêmio
+                diff = paranagua_real - preco_porto_brl
+                valor_final = round(paranagua_real - (PREMIOS_SOJA["Paranagua"] - premio_usd) * (SACA_KG / SOJA_KG_POR_BUSHEL) * dolar_brl, 2)
+                var_porto = round(((valor_final - anterior_porto_brl) / anterior_porto_brl) * 100, 2)
+                fonte = "ajustado"
+            else:
+                valor_final = round(preco_porto_brl, 2)
+                var_porto = round(((preco_porto_brl - anterior_porto_brl) / anterior_porto_brl) * 100, 2)
+                fonte = "estimado"
+
             precos[f"Soja {porto}"] = {
-                "valor":    round(preco_porto_brl, 2),
+                "valor":    valor_final,
                 "anterior": round(anterior_porto_brl, 2),
                 "variacao": var_porto,
                 "unidade":  "R$/saca",
+                "fonte":    fonte,
             }
 
     # --- MILHO (CBOT, cents/bushel → USD/bushel → R$/saca 60kg) ---
@@ -492,10 +600,10 @@ def montar_mensagem(precos: dict, resumo_ia: str) -> str:
         sinal = "+" if d["variacao"] > 0 else ""
         msg  += f"\n*💵 DÓLAR:* R$ {d['valor']:.4f} ({sinal}{d['variacao']:.2f}%)\n"
 
-    # Portos — agrupados por cidade
-    msg += "\n*🚢 PORTOS BRASILEIROS (R$/saca)*\n"
-    portos    = ["Paranagua", "Tubarao", "Barcarena", "Sao Luis"]
-    culturas  = [("Soja", "🌱"), ("Milho", "🌽"), ("Sorgo", "🌾")]
+    # Portos — preços médios comercializados com aviso profissional
+    msg += "\n*🚢 PREÇOS MÉDIOS COMERCIALIZADOS NOS PORTOS DO BRASIL*\n"
+    portos   = ["Paranagua", "Tubarao", "Barcarena", "Sao Luis"]
+    culturas = [("Soja", "🌱"), ("Milho", "🌽"), ("Sorgo", "🌾")]
 
     for porto in portos:
         linhas_porto = []
@@ -510,6 +618,12 @@ def montar_mensagem(precos: dict, resumo_ia: str) -> str:
                 )
         if linhas_porto:
             msg += f"\n📍 *{porto}*\n" + "\n".join(linhas_porto) + "\n"
+
+    msg += (
+        "\n_ℹ️ Preços médios de referência com base em fontes públicas "
+        "do mercado físico brasileiro. Consulte sua cooperativa, "
+        "corretor ou trading para confirmação antes de negociar._\n"
+    )
 
     # Análise
     msg += f"\n*🤖 Análise do Dia:*\n{resumo_ia}\n"
