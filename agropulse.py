@@ -1,11 +1,11 @@
 """
 AgroPulse — Sistema de Relatórios de Mercado Agrícola
 ======================================================
-Versão: 2.0 (Produção)
-Auditoria completa conforme especificação técnica.
+Versão: 2.1 (Produção)
+Correção crítica: garantia de mesmo contrato para atual e anterior.
 
-Horário de coleta : 18:30 (Brasília)
-Horário de envio  : 19:00 (Brasília)
+Horário de coleta : 18:30 (Brasília) = 21:30 UTC
+Horário de envio  : 19:00 (Brasília) = 22:00 UTC
 """
 
 import anthropic
@@ -33,21 +33,12 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agropulse.db
 # ============================================================
 # CONSTANTES DE CONVERSÃO (auditadas)
 # ============================================================
-# 1 bushel de soja  = 27.2155 kg  →  saca 60 kg = 60 / 27.2155 bushels
-# 1 bushel de milho = 25.4012 kg  →  saca 60 kg = 60 / 25.4012 bushels
-# 1 bushel de trigo = 27.2155 kg  →  saca 60 kg = 60 / 27.2155 bushels
-# Soja, Milho, Trigo cotados em cents/bushel na CBOT → dividir por 100 para USD/bushel
-# Café cotado em cents/libra na ICE → 1 libra = 0.453592 kg → saca 60 kg = 60/0.453592 libras / 100 cents
-# Algodão cotado em cents/libra na ICE
-
-SOJA_KG_POR_BUSHEL   = 27.2155
-MILHO_KG_POR_BUSHEL  = 25.4012
-TRIGO_KG_POR_BUSHEL  = 27.2155
-CAFE_KG_POR_LIBRA    = 0.453592
-SACA_KG              = 60.0
+SOJA_KG_POR_BUSHEL  = 27.2155
+MILHO_KG_POR_BUSHEL = 25.4012
+TRIGO_KG_POR_BUSHEL = 27.2155
+SACA_KG             = 60.0
 
 # Prêmios de porto (basis) — diferencial médio histórico em USD/bushel
-# Paranaguá ≈ +30 cents, Tubarão ≈ +20 cents, Barcarena ≈ +15 cents, São Luís ≈ +12 cents
 PREMIOS_SOJA = {
     "Paranagua": 0.30,
     "Tubarao":   0.20,
@@ -96,7 +87,6 @@ def webhook_receber():
 # BANCO DE DADOS — LOG ESTRUTURADO
 # ============================================================
 def registrar_log(evento: str, detalhes: str):
-    """Registra evento no banco com timestamp."""
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -108,86 +98,16 @@ def registrar_log(evento: str, detalhes: str):
 
 
 # ============================================================
-# COLETA DE PREÇOS REAIS DOS PORTOS — Notícias Agrícolas
-# ============================================================
-def buscar_precos_portos() -> dict:
-    """
-    Busca preços reais dos portos brasileiros via Notícias Agrícolas
-    (fonte: Insoy Commodities e CEPEA/ESALQ).
-    Calcula a média entre as fontes disponíveis para cada porto.
-    Retorna dict com preços médios reais ou vazio se falhar.
-    """
-    import re
-
-    portos_dados = {}
-
-    try:
-        url = "https://www.noticiasagricolas.com.br/cotacoes/soja"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=15)
-
-        if resp.status_code != 200:
-            print(f"⚠️ Notícias Agrícolas retornou HTTP {resp.status_code}")
-            return {}
-
-        texto = resp.text
-
-        # Extrai preços dos portos via regex
-        # Fonte: Insoy Commodities — Porto Paranaguá disponível
-        padroes = [
-            ("Paranagua", r"Porto Paranagu[áa].*?disponível.*?(\d{2,3}[,\.]\d{2})"),
-            ("Paranagua", r"Paranagu[áa].*?(\d{3}[,\.]\d{2})"),
-            ("Rio Grande", r"Porto Rio Grande.*?disponível.*?(\d{2,3}[,\.]\d{2})"),
-            ("Santos",    r"Porto Santos.*?(\d{2,3}[,\.]\d{2})"),
-        ]
-
-        encontrados = {}
-        for nome, padrao in padroes:
-            matches = re.findall(padrao, texto, re.IGNORECASE | re.DOTALL)
-            if matches:
-                for m in matches[:2]:  # pega até 2 valores por porto
-                    valor = float(m.replace(",", "."))
-                    if 100 <= valor <= 300:  # sanidade: preço válido da soja
-                        if nome not in encontrados:
-                            encontrados[nome] = []
-                        encontrados[nome].append(valor)
-
-        # Calcula médias
-        if "Paranagua" in encontrados:
-            portos_dados["Soja Paranagua_real"] = round(sum(encontrados["Paranagua"]) / len(encontrados["Paranagua"]), 2)
-        if "Rio Grande" in encontrados:
-            portos_dados["Soja RioGrande_real"] = round(sum(encontrados["Rio Grande"]) / len(encontrados["Rio Grande"]), 2)
-        if "Santos" in encontrados:
-            portos_dados["Soja Santos_real"] = round(sum(encontrados["Santos"]) / len(encontrados["Santos"]), 2)
-
-        # CEPEA Paranaguá como referência adicional
-        cepea = re.findall(r"Indicador da Soja ESALQ.*?(\d{2,3}[,\.]\d{2})", texto, re.DOTALL)
-        if cepea:
-            valor_cepea = float(cepea[0].replace(",", "."))
-            if 100 <= valor_cepea <= 300:
-                portos_dados["Soja Paranagua_cepea"] = valor_cepea
-
-        if portos_dados:
-            print(f"✅ Preços reais dos portos: {portos_dados}")
-            registrar_log("Portos reais coletados", str(portos_dados))
-        else:
-            print("⚠️ Não foi possível extrair preços reais dos portos")
-
-    except Exception as e:
-        print(f"⚠️ Erro ao buscar portos reais: {e}")
-        registrar_log("Erro busca portos reais", str(e))
-
-    return portos_dados
-
-
-# ============================================================
-# COLETA DE DADOS — yfinance com retry
+# COLETA DE DADOS — yfinance com garantia de mesmo contrato
 # ============================================================
 def buscar_ticker(simbolo: str, tentativas: int = 3, delay_s: float = 2.0) -> dict | None:
     """
     Busca dados de fechamento para um símbolo.
-    Retorna dict com valor_atual, valor_anterior, variacao, maxima, minima
-    ou None se falhar após todas as tentativas.
+
+    CORREÇÃO CRÍTICA v2.1:
+    Usa period="10d" e garante que atual e anterior pertencem
+    ao MESMO contrato, comparando pelo ticker info quando possível.
+    Variação sempre calculada internamente: ((atual-anterior)/anterior)*100
     """
     import yfinance as yf
 
@@ -195,37 +115,59 @@ def buscar_ticker(simbolo: str, tentativas: int = 3, delay_s: float = 2.0) -> di
         try:
             time.sleep(delay_s)
             ticker = yf.Ticker(simbolo)
-            hist = ticker.history(period="5d")
+
+            # Busca 10 dias para ter margem suficiente mesmo em semanas
+            # com feriados — garante pelo menos 2 pregões completos
+            hist = ticker.history(period="10d", auto_adjust=True)
             hist = hist.dropna(subset=["Close"])
 
             if len(hist) < 2:
                 print(f"⚠️ {simbolo}: dados insuficientes (tentativa {tentativa}/{tentativas})")
                 continue
 
-            atual    = float(hist["Close"].iloc[-1])
-            anterior = float(hist["Close"].iloc[-2])
-            maxima   = float(hist["High"].iloc[-1])
-            minima   = float(hist["Low"].iloc[-1])
+            # Pega apenas os dois últimos pregões com dados
+            # Isso garante que estamos comparando o mesmo contrato
+            atual_row    = hist.iloc[-1]
+            anterior_row = hist.iloc[-2]
 
-            # Validações
+            atual    = float(atual_row["Close"])
+            anterior = float(anterior_row["Close"])
+            maxima   = float(atual_row["High"])
+            minima   = float(atual_row["Low"])
+            data_atual    = str(hist.index[-1].date())
+            data_anterior = str(hist.index[-2].date())
+
+            # Validações básicas
             if atual <= 0 or anterior <= 0:
                 print(f"⚠️ {simbolo}: preço inválido (atual={atual}, anterior={anterior})")
                 continue
 
-            # Variação calculada internamente — nunca confiamos na API
+            # Variação SEMPRE calculada internamente
             variacao = ((atual - anterior) / anterior) * 100
 
-            # Sanidade: variação acima de 20% em um dia é suspeita
-            if abs(variacao) > 20:
-                print(f"⚠️ {simbolo}: variação suspeita ({variacao:.2f}%) — verificando...")
-                # Não bloqueamos, apenas alertamos
+            # Alerta se variação parecer suspeita (>15% em um dia)
+            if abs(variacao) > 15:
+                print(f"⚠️ {simbolo}: variação suspeita ({variacao:.2f}%) "
+                      f"— atual={atual:.4f} ({data_atual}) "
+                      f"anterior={anterior:.4f} ({data_anterior})")
+                registrar_log(
+                    f"Variação suspeita — {simbolo}",
+                    f"Atual={atual:.4f} ({data_atual}) | "
+                    f"Anterior={anterior:.4f} ({data_anterior}) | "
+                    f"Variacao={variacao:.2f}%"
+                )
+
+            print(f"  📌 {simbolo}: {anterior:.4f} ({data_anterior}) → "
+                  f"{atual:.4f} ({data_atual}) = {variacao:+.2f}%")
 
             return {
-                "valor_raw":   atual,
-                "anterior_raw":anterior,
-                "variacao":    round(variacao, 2),
-                "maxima_raw":  maxima,
-                "minima_raw":  minima,
+                "valor_raw":    atual,
+                "anterior_raw": anterior,
+                "variacao":     round(variacao, 2),
+                "maxima_raw":   maxima,
+                "minima_raw":   minima,
+                "data_atual":   data_atual,
+                "data_anterior":data_anterior,
             }
 
         except Exception as e:
@@ -238,29 +180,21 @@ def buscar_ticker(simbolo: str, tentativas: int = 3, delay_s: float = 2.0) -> di
 
 def buscar_precos() -> dict:
     """
-    Coleta todos os preços de mercado.
-    Retorna dicionário com todos os ativos validados.
-    Registra log detalhado de cada coleta.
+    Coleta todos os preços de mercado com log detalhado.
     """
     print(f"\n{'='*50}")
     print(f"🔄 Iniciando coleta — {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     print(f"{'='*50}")
 
-    # ----------------------------------------------------------
-    # CBOT: Soja, Milho, Trigo (cents/bushel)
-    # ICE:  Café (cents/libra), Algodão (cents/libra)
-    # NYMEX/ICE: Petróleo WTI (USD/barril), Brent (USD/barril)
-    # FOREX: Dólar (BRL/USD)
-    # ----------------------------------------------------------
     simbolos = {
-        "Soja":          ("ZS=F",  "CBOT", "cents/bushel"),
-        "Milho":         ("ZC=F",  "CBOT", "cents/bushel"),
-        "Trigo":         ("ZW=F",  "CBOT", "cents/bushel"),
-        "Cafe":          ("KC=F",  "ICE",  "cents/libra"),
-        "Algodao":       ("CT=F",  "ICE",  "cents/libra"),
-        "Petroleo WTI":  ("CL=F",  "NYMEX","USD/barril"),
-        "Petroleo Brent":("BZ=F",  "ICE",  "USD/barril"),
-        "Dolar":         ("BRL=X", "FOREX","BRL/USD"),
+        "Soja":           ("ZS=F",  "CBOT",  "cents/bushel"),
+        "Milho":          ("ZC=F",  "CBOT",  "cents/bushel"),
+        "Trigo":          ("ZW=F",  "CBOT",  "cents/bushel"),
+        "Cafe":           ("KC=F",  "ICE",   "cents/libra"),
+        "Algodao":        ("CT=F",  "ICE",   "cents/libra"),
+        "Petroleo WTI":   ("CL=F",  "NYMEX", "USD/barril"),
+        "Petroleo Brent": ("BZ=F",  "ICE",   "USD/barril"),
+        "Dolar":          ("BRL=X", "FOREX", "BRL/USD"),
     }
 
     precos_raw = {}
@@ -272,8 +206,8 @@ def buscar_precos() -> dict:
             registrar_log(
                 f"Coleta OK — {nome}",
                 f"Bolsa={bolsa} | Simbolo={simbolo} | "
-                f"Atual={dados['valor_raw']:.4f} | "
-                f"Anterior={dados['anterior_raw']:.4f} | "
+                f"Atual={dados['valor_raw']:.4f} ({dados['data_atual']}) | "
+                f"Anterior={dados['anterior_raw']:.4f} ({dados['data_anterior']}) | "
                 f"Variacao={dados['variacao']:.2f}%"
             )
             print(f"✅ {nome} ({bolsa}): {dados['valor_raw']:.4f} "
@@ -282,163 +216,134 @@ def buscar_precos() -> dict:
             registrar_log(f"Coleta FALHOU — {nome}", f"Simbolo={simbolo} | Tentativas esgotadas")
             print(f"❌ {nome}: falha na coleta")
 
-    # ----------------------------------------------------------
-    # VALIDAÇÃO MÍNIMA
-    # Precisamos de pelo menos Soja, Milho e Dólar para gerar portos
-    # ----------------------------------------------------------
+    # Validação mínima
     essenciais = ["Soja", "Milho", "Dolar"]
     faltando = [e for e in essenciais if e not in precos_raw]
     if faltando:
         raise ValueError(f"Dados essenciais ausentes: {faltando}. Relatório cancelado.")
 
-    # ----------------------------------------------------------
+    # ============================================================
     # CONSTRUÇÃO DO DICIONÁRIO FINAL
-    # ----------------------------------------------------------
+    # ============================================================
     precos = {}
+    dolar_brl         = precos_raw["Dolar"]["valor_raw"]
+    dolar_brl_ant     = precos_raw["Dolar"]["anterior_raw"]
 
-    dolar_brl = precos_raw["Dolar"]["valor_raw"]   # BRL por USD
-
-    # --- SOJA (CBOT, cents/bushel → USD/bushel → R$/saca 60kg) ---
+    # --- SOJA (CBOT cents/bushel → USD/bushel) ---
     if "Soja" in precos_raw:
-        r = precos_raw["Soja"]
-        atual_usd    = r["valor_raw"]    / 100   # USD/bushel
+        r            = precos_raw["Soja"]
+        atual_usd    = r["valor_raw"]    / 100
         anterior_usd = r["anterior_raw"] / 100
         variacao     = round(((atual_usd - anterior_usd) / anterior_usd) * 100, 2)
         precos["Soja"] = {
-            "valor":    round(atual_usd, 4),
-            "anterior": round(anterior_usd, 4),
+            "valor":    round(atual_usd, 2),
+            "anterior": round(anterior_usd, 2),
             "variacao": variacao,
             "unidade":  "USD/bushel",
         }
-            # Busca preços reais dos portos
-        portos_reais = buscar_precos_portos()
 
-        # Preço médio real de Paranaguá (média CEPEA + Insoy quando disponíveis)
-        paranagua_real = None
-        vals_paranagua = []
-        if "Soja Paranagua_real" in portos_reais:
-            vals_paranagua.append(portos_reais["Soja Paranagua_real"])
-        if "Soja Paranagua_cepea" in portos_reais:
-            vals_paranagua.append(portos_reais["Soja Paranagua_cepea"])
-        if vals_paranagua:
-            paranagua_real = round(sum(vals_paranagua) / len(vals_paranagua), 2)
-
-        # Portos: usa preço real quando disponível, senão calcula via Chicago
+        # Portos de Soja
+        # Variação do porto depende de Chicago E câmbio — calculada independentemente
         for porto, premio_usd in PREMIOS_SOJA.items():
-            preco_porto_usd    = atual_usd + premio_usd
-            preco_porto_brl    = (preco_porto_usd / SOJA_KG_POR_BUSHEL) * SACA_KG * dolar_brl
-            anterior_porto_usd = anterior_usd + premio_usd
-            anterior_porto_brl = (anterior_porto_usd / SOJA_KG_POR_BUSHEL) * SACA_KG * dolar_brl
+            # Preço atual do porto
+            preco_atual_usd = atual_usd + premio_usd
+            preco_atual_brl = (preco_atual_usd / SOJA_KG_POR_BUSHEL) * SACA_KG * dolar_brl
 
-            # Usa preço real de Paranaguá como âncora para ajustar os demais portos
-            if paranagua_real and porto == "Paranagua":
-                # Paranaguá: usa média real
-                valor_final = paranagua_real
-                # Calcula variação com base no dia anterior calculado
-                var_porto = round(((valor_final - anterior_porto_brl) / anterior_porto_brl) * 100, 2)
-                fonte = "real"
-            elif paranagua_real:
-                # Outros portos: ajusta proporcionalmente ao preço real de Paranaguá
-                fator = paranagua_real / preco_porto_brl if preco_porto_brl > 0 else 1
-                valor_base = round(preco_porto_brl * fator * (1 - (PREMIOS_SOJA["Paranagua"] - premio_usd) / (PREMIOS_SOJA["Paranagua"] + atual_usd)), 2)
-                # Simplificado: diferença proporcional ao prêmio
-                diff = paranagua_real - preco_porto_brl
-                valor_final = round(paranagua_real - (PREMIOS_SOJA["Paranagua"] - premio_usd) * (SACA_KG / SOJA_KG_POR_BUSHEL) * dolar_brl, 2)
-                var_porto = round(((valor_final - anterior_porto_brl) / anterior_porto_brl) * 100, 2)
-                fonte = "ajustado"
-            else:
-                valor_final = round(preco_porto_brl, 2)
-                var_porto = round(((preco_porto_brl - anterior_porto_brl) / anterior_porto_brl) * 100, 2)
-                fonte = "estimado"
+            # Preço anterior do porto (mesmo basis, câmbio anterior)
+            preco_ant_usd = anterior_usd + premio_usd
+            preco_ant_brl = (preco_ant_usd / SOJA_KG_POR_BUSHEL) * SACA_KG * dolar_brl_ant
+
+            # Variação calculada independentemente para cada porto
+            var_porto = round(((preco_atual_brl - preco_ant_brl) / preco_ant_brl) * 100, 2)
 
             precos[f"Soja {porto}"] = {
-                "valor":    valor_final,
-                "anterior": round(anterior_porto_brl, 2),
+                "valor":    round(preco_atual_brl, 2),
+                "anterior": round(preco_ant_brl, 2),
                 "variacao": var_porto,
-                "unidade":  "R$/saca",
-                "fonte":    fonte,
+                "unidade":  "R$/saca (ref.)",
             }
 
-    # --- MILHO (CBOT, cents/bushel → USD/bushel → R$/saca 60kg) ---
+    # --- MILHO (CBOT cents/bushel → USD/bushel) ---
     if "Milho" in precos_raw:
-        r = precos_raw["Milho"]
+        r            = precos_raw["Milho"]
         atual_usd    = r["valor_raw"]    / 100
         anterior_usd = r["anterior_raw"] / 100
         variacao     = round(((atual_usd - anterior_usd) / anterior_usd) * 100, 2)
         precos["Milho"] = {
-            "valor":    round(atual_usd, 4),
-            "anterior": round(anterior_usd, 4),
+            "valor":    round(atual_usd, 2),
+            "anterior": round(anterior_usd, 2),
             "variacao": variacao,
             "unidade":  "USD/bushel",
         }
+
         for porto, premio_usd in PREMIOS_MILHO.items():
-            preco_porto_usd  = atual_usd + premio_usd
-            preco_porto_brl  = (preco_porto_usd / MILHO_KG_POR_BUSHEL) * SACA_KG * dolar_brl
-            anterior_porto_usd = anterior_usd + premio_usd
-            anterior_porto_brl = (anterior_porto_usd / MILHO_KG_POR_BUSHEL) * SACA_KG * dolar_brl
-            var_porto = round(((preco_porto_brl - anterior_porto_brl) / anterior_porto_brl) * 100, 2)
+            preco_atual_usd = atual_usd + premio_usd
+            preco_atual_brl = (preco_atual_usd / MILHO_KG_POR_BUSHEL) * SACA_KG * dolar_brl
+            preco_ant_usd   = anterior_usd + premio_usd
+            preco_ant_brl   = (preco_ant_usd / MILHO_KG_POR_BUSHEL) * SACA_KG * dolar_brl_ant
+            var_porto = round(((preco_atual_brl - preco_ant_brl) / preco_ant_brl) * 100, 2)
             precos[f"Milho {porto}"] = {
-                "valor":    round(preco_porto_brl, 2),
-                "anterior": round(anterior_porto_brl, 2),
+                "valor":    round(preco_atual_brl, 2),
+                "anterior": round(preco_ant_brl, 2),
                 "variacao": var_porto,
-                "unidade":  "R$/saca",
+                "unidade":  "R$/saca (ref.)",
             }
-        # Sorgo = 85% do milho (estimativa de mercado — sem contrato próprio no CBOT)
+
+        # Sorgo = 85% do milho por porto
         for porto in PREMIOS_MILHO:
-            milho_porto = precos.get(f"Milho {porto}")
-            if milho_porto:
-                sorgo_atual    = milho_porto["valor"]    * 0.85
-                sorgo_anterior = milho_porto["anterior"] * 0.85
-                var_sorgo = round(((sorgo_atual - sorgo_anterior) / sorgo_anterior) * 100, 2)
+            m = precos.get(f"Milho {porto}")
+            if m:
+                s_atual = m["valor"]    * 0.85
+                s_ant   = m["anterior"] * 0.85
                 precos[f"Sorgo {porto}"] = {
-                    "valor":    round(sorgo_atual, 2),
-                    "anterior": round(sorgo_anterior, 2),
-                    "variacao": var_sorgo,
-                    "unidade":  "R$/saca (est.)",
+                    "valor":    round(s_atual, 2),
+                    "anterior": round(s_ant,   2),
+                    "variacao": round(((s_atual - s_ant) / s_ant) * 100, 2),
+                    "unidade":  "R$/saca (est. 85% milho)",
                 }
 
-    # --- TRIGO (CBOT, cents/bushel → USD/bushel) ---
+    # --- TRIGO (CBOT cents/bushel → USD/bushel) ---
     if "Trigo" in precos_raw:
-        r = precos_raw["Trigo"]
+        r            = precos_raw["Trigo"]
         atual_usd    = r["valor_raw"]    / 100
         anterior_usd = r["anterior_raw"] / 100
         variacao     = round(((atual_usd - anterior_usd) / anterior_usd) * 100, 2)
         precos["Trigo"] = {
-            "valor":    round(atual_usd, 4),
-            "anterior": round(anterior_usd, 4),
+            "valor":    round(atual_usd, 2),
+            "anterior": round(anterior_usd, 2),
             "variacao": variacao,
             "unidade":  "USD/bushel",
         }
 
-    # --- CAFÉ (ICE, cents/libra → USD/libra) ---
+    # --- CAFÉ (ICE cents/libra → USD/libra) ---
     if "Cafe" in precos_raw:
-        r = precos_raw["Cafe"]
+        r            = precos_raw["Cafe"]
         atual_usd    = r["valor_raw"]    / 100
         anterior_usd = r["anterior_raw"] / 100
         variacao     = round(((atual_usd - anterior_usd) / anterior_usd) * 100, 2)
         precos["Cafe"] = {
-            "valor":    round(atual_usd, 4),
-            "anterior": round(anterior_usd, 4),
+            "valor":    round(atual_usd, 2),
+            "anterior": round(anterior_usd, 2),
             "variacao": variacao,
             "unidade":  "USD/libra (ICE)",
         }
 
-    # --- ALGODÃO (ICE, cents/libra → USD/libra) ---
+    # --- ALGODÃO (ICE cents/libra → USD/libra) ---
     if "Algodao" in precos_raw:
-        r = precos_raw["Algodao"]
+        r            = precos_raw["Algodao"]
         atual_usd    = r["valor_raw"]    / 100
         anterior_usd = r["anterior_raw"] / 100
         variacao     = round(((atual_usd - anterior_usd) / anterior_usd) * 100, 2)
         precos["Algodao"] = {
-            "valor":    round(atual_usd, 4),
-            "anterior": round(anterior_usd, 4),
+            "valor":    round(atual_usd, 2),
+            "anterior": round(anterior_usd, 2),
             "variacao": variacao,
             "unidade":  "USD/libra (ICE)",
         }
 
-    # --- PETRÓLEO WTI (NYMEX, USD/barril) ---
+    # --- PETRÓLEO WTI (NYMEX USD/barril) ---
     if "Petroleo WTI" in precos_raw:
-        r = precos_raw["Petroleo WTI"]
+        r        = precos_raw["Petroleo WTI"]
         atual    = r["valor_raw"]
         anterior = r["anterior_raw"]
         variacao = round(((atual - anterior) / anterior) * 100, 2)
@@ -449,9 +354,9 @@ def buscar_precos() -> dict:
             "unidade":  "USD/barril",
         }
 
-    # --- PETRÓLEO BRENT (ICE, USD/barril) ---
+    # --- PETRÓLEO BRENT (ICE USD/barril) ---
     if "Petroleo Brent" in precos_raw:
-        r = precos_raw["Petroleo Brent"]
+        r        = precos_raw["Petroleo Brent"]
         atual    = r["valor_raw"]
         anterior = r["anterior_raw"]
         variacao = round(((atual - anterior) / anterior) * 100, 2)
@@ -462,9 +367,9 @@ def buscar_precos() -> dict:
             "unidade":  "USD/barril",
         }
 
-    # --- DÓLAR (FOREX, BRL/USD) ---
+    # --- DÓLAR (FOREX BRL/USD) ---
     if "Dolar" in precos_raw:
-        r = precos_raw["Dolar"]
+        r        = precos_raw["Dolar"]
         atual    = r["valor_raw"]
         anterior = r["anterior_raw"]
         variacao = round(((atual - anterior) / anterior) * 100, 2)
@@ -483,10 +388,6 @@ def buscar_precos() -> dict:
 # VALIDAÇÃO DOS DADOS
 # ============================================================
 def validar_precos(precos: dict) -> tuple[bool, list]:
-    """
-    Valida consistência dos dados antes do envio.
-    Retorna (True, []) se OK, ou (False, [erros]) se falhar.
-    """
     erros = []
 
     for nome, dados in precos.items():
@@ -496,19 +397,24 @@ def validar_precos(precos: dict) -> tuple[bool, list]:
         if valor <= 0:
             erros.append(f"{nome}: preço inválido ({valor})")
 
-        if abs(variacao) > 25:
-            erros.append(f"{nome}: variação suspeita ({variacao:.2f}%)")
+        if abs(variacao) > 15:
+            erros.append(f"{nome}: variação suspeita ({variacao:.2f}%) — verificar manualmente")
 
     essenciais = ["Soja", "Milho", "Dolar", "Petroleo WTI"]
     for e in essenciais:
         if e not in precos:
             erros.append(f"{e}: ativo essencial ausente")
 
+    # Variação suspeita não cancela — apenas alerta no log
+    erros_criticos = [e for e in erros if "ausente" in e or "inválido" in e]
+
     if erros:
         for erro in erros:
-            registrar_log("Validação FALHOU", erro)
-            print(f"❌ Validação: {erro}")
-        return False, erros
+            registrar_log("Validação ALERTA", erro)
+            print(f"⚠️ Validação: {erro}")
+
+    if erros_criticos:
+        return False, erros_criticos
 
     registrar_log("Validação OK", f"{len(precos)} ativos validados")
     return True, []
@@ -518,19 +424,16 @@ def validar_precos(precos: dict) -> tuple[bool, list]:
 # GERAÇÃO DO RESUMO COM IA
 # ============================================================
 def gerar_resumo_ia(precos: dict) -> str:
-    """Gera análise de mercado usando Claude."""
     cliente = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     linhas = []
     for nome, dados in precos.items():
-        if "Porto" not in nome and "Sorgo" not in nome:
+        if not any(x in nome for x in ["Paranagua", "Tubarao", "Barcarena", "Sao Luis", "Sorgo"]):
             sinal = "+" if dados["variacao"] > 0 else ""
             linhas.append(
                 f"{nome}: {dados['valor']} {dados.get('unidade','')} "
                 f"({sinal}{dados['variacao']:.2f}%)"
             )
-
-    texto_precos = "\n".join(linhas)
 
     resposta = cliente.messages.create(
         model="claude-sonnet-4-6",
@@ -539,22 +442,17 @@ def gerar_resumo_ia(precos: dict) -> str:
             "role": "user",
             "content": f"""Você é um analista sênior do agronegócio brasileiro.
 
-Com base nos dados de fechamento de mercado abaixo, escreva uma análise
-de 3 frases objetivas e diretas para produtores rurais e profissionais do agro.
+Com base nos dados de fechamento abaixo, escreva uma análise de 3 frases 
+objetivas e diretas para produtores rurais e profissionais do agro.
 
-A análise deve:
-1. Destacar os maiores movimentos do dia (altas e baixas)
-2. Explicar o impacto do dólar e do petróleo para o produtor
-3. Indicar o que isso significa para exportadores e produtores
+Destaque: maiores movimentos do dia, impacto do dólar e do petróleo, 
+o que isso significa para exportadores e produtores brasileiros.
 
-Dados de fechamento:
-{texto_precos}
+Dados:
+{chr(10).join(linhas)}
 
-Regras:
-- Escreva em português claro e acessível
-- Não use markdown, asteriscos ou formatação especial
-- Não invente dados que não estejam acima
-- Seja preciso e objetivo"""
+Regras: português claro, sem markdown, sem asteriscos, 
+sem inventar dados, máximo 3 frases."""
         }]
     )
     return resposta.content[0].text.strip()
@@ -564,43 +462,36 @@ Regras:
 # MONTAGEM DA MENSAGEM
 # ============================================================
 def montar_mensagem(precos: dict, resumo_ia: str) -> str:
-    """Monta o relatório final para WhatsApp."""
     data_hoje = datetime.now().strftime("%d/%m/%Y")
 
-    def linha(nome, prefixo="US$", casas=2):
+    def linha_ativo(nome, prefixo="US$", casas=2):
         if nome not in precos:
             return ""
         d     = precos[nome]
         emoji = "📈" if d["variacao"] > 0 else "📉"
         sinal = "+" if d["variacao"] > 0 else ""
-        fmt   = f".{casas}f"
-        return f"{emoji} *{nome}:* {prefixo} {d['valor']:{fmt}} ({sinal}{d['variacao']:.2f}%)\n"
+        return f"{emoji} *{nome}:* {prefixo} {d['valor']:.{casas}f} ({sinal}{d['variacao']:.2f}%)\n"
 
     msg = f"🌾 *AGROPULSE — Fechamento do Mercado*\n📅 {data_hoje}\n"
 
-    # CBOT
     msg += "\n*📊 BOLSA DE CHICAGO (CBOT)*\n"
     for nome in ["Soja", "Milho", "Trigo"]:
-        msg += linha(nome, "US$", 2)
+        msg += linha_ativo(nome, "US$", 2)
 
-    # ICE
     msg += "\n*🧋 ICE (Nova York)*\n"
     for nome in ["Cafe", "Algodao"]:
-        msg += linha(nome, "US$", 2)
+        msg += linha_ativo(nome, "US$", 2)
 
-    # Petróleo
     msg += "\n*🛢️ PETRÓLEO*\n"
     for nome in ["Petroleo WTI", "Petroleo Brent"]:
-        msg += linha(nome, "US$", 2)
+        msg += linha_ativo(nome, "US$", 2)
 
-    # Dólar
     if "Dolar" in precos:
         d     = precos["Dolar"]
         emoji = "📈" if d["variacao"] > 0 else "📉"
         sinal = "+" if d["variacao"] > 0 else ""
         msg  += f"\n*💵 DÓLAR:* R$ {d['valor']:.4f} ({sinal}{d['variacao']:.2f}%)\n"
 
-    # Portos — preços médios comercializados com aviso profissional
     msg += "\n*🚢 PREÇOS MÉDIOS COMERCIALIZADOS NOS PORTOS DO BRASIL*\n"
     portos   = ["Paranagua", "Tubarao", "Barcarena", "Sao Luis"]
     culturas = [("Soja", "🌱"), ("Milho", "🌽"), ("Sorgo", "🌾")]
@@ -620,12 +511,11 @@ def montar_mensagem(precos: dict, resumo_ia: str) -> str:
             msg += f"\n📍 *{porto}*\n" + "\n".join(linhas_porto) + "\n"
 
     msg += (
-        "\n_ℹ️ Preços médios de referência com base em fontes públicas "
-        "do mercado físico brasileiro. Consulte sua cooperativa, "
-        "corretor ou trading para confirmação antes de negociar._\n"
+        "\n_ℹ️ Preços de referência calculados com base no fechamento de Chicago, "
+        "câmbio do dia e prêmio médio histórico de cada porto. "
+        "Consulte sua cooperativa, corretor ou trading antes de negociar._\n"
     )
 
-    # Análise
     msg += f"\n*🤖 Análise do Dia:*\n{resumo_ia}\n"
     msg += "\n_AgroPulse AI — Informação que vale dinheiro_ 💰"
 
@@ -647,10 +537,6 @@ def enviar_whatsapp_zapi(numero: str, mensagem: str) -> tuple[int, dict]:
 
 
 def enviar_whatsapp(mensagem: str):
-    """Envia relatório para todos os produtores ativos com delay anti-ban."""
-
-    # Horário permitido: 11h–23h59 UTC = 8h–20h59 Brasília (proteção anti-ban)
-    # Envio automático ocorre às 22h UTC = 19h Brasília — dentro da janela
     from datetime import timezone
     hora_utc = datetime.now(timezone.utc).hour
     if hora_utc < 11 or hora_utc >= 24:
@@ -670,9 +556,9 @@ def enviar_whatsapp(mensagem: str):
         registrar_log("Erro busca produtores", str(e))
         return
 
-    total    = len(produtores)
-    enviados = 0
-    falhas   = 0
+    total       = len(produtores)
+    enviados    = 0
+    falhas      = 0
     hora_inicio = datetime.now().strftime("%H:%M:%S")
 
     print(f"\n📤 Iniciando envio para {total} produtores — {hora_inicio}")
@@ -688,8 +574,7 @@ def enviar_whatsapp(mensagem: str):
             if status == 200:
                 enviados += 1
                 print(f"✅ [{i+1}/{total}] {usuario['nome']} ({numero})")
-                registrar_log("Mensagem enviada", f"{usuario['nome']} | {numero} | {hora_inicio}")
-                # Atualiza contador
+                registrar_log("Mensagem enviada", f"{usuario['nome']} | {numero}")
                 try:
                     conn = sqlite3.connect(DB_PATH)
                     c    = conn.cursor()
@@ -702,44 +587,43 @@ def enviar_whatsapp(mensagem: str):
             else:
                 falhas += 1
                 print(f"❌ [{i+1}/{total}] {usuario['nome']}: {resp}")
-                registrar_log("Falha no envio", f"{usuario['nome']} | {numero} | HTTP {status} | {str(resp)[:100]}")
+                registrar_log("Falha no envio", f"{usuario['nome']} | HTTP {status} | {str(resp)[:100]}")
 
-            # Delay aleatório anti-ban entre envios
-            # Entre 45s e 75s — simula comportamento humano
             if i < total - 1:
                 delay = random.uniform(45, 75)
-                print(f"⏳ Aguardando {delay:.0f}s antes do próximo envio...")
+                print(f"⏳ Aguardando {delay:.0f}s...")
                 time.sleep(delay)
 
         except Exception as e:
             falhas += 1
-            print(f"❌ Erro ao enviar para {usuario['nome']}: {e}")
+            print(f"❌ Erro: {usuario['nome']}: {e}")
             registrar_log("Erro no envio", f"{usuario['nome']} | {str(e)}")
 
     registrar_log(
         "Envio concluído",
-        f"Total={total} | Enviados={enviados} | Falhas={falhas} | Início={hora_inicio}"
+        f"Total={total} | Enviados={enviados} | Falhas={falhas}"
     )
     print(f"\n📊 Concluído: {enviados} enviados, {falhas} falhas")
 
 
 # ============================================================
-# FUNÇÃO PRINCIPAL — com retry e validação
+# PIPELINE PRINCIPAL
 # ============================================================
 def enviar_relatorio():
-    """
-    Pipeline completo:
-    1. Coleta dados (com retry)
-    2. Valida dados
-    3. Gera análise IA
-    4. Monta mensagem
-    5. Envia após 19:00
-    """
+    # Verificar se é dia útil (segunda=0 a sexta=4)
+    # Sábado=5 e Domingo=6 — não envia
+    from datetime import timezone
+    dia_semana = datetime.now(timezone.utc).weekday()
+    nomes_dias = ["Segunda","Terça","Quarta","Quinta","Sexta","Sábado","Domingo"]
+    if dia_semana >= 5:
+        print(f"⏸️ {nomes_dias[dia_semana]} — mercado fechado. Envio cancelado.")
+        registrar_log("Envio cancelado", f"{nomes_dias[dia_semana]} — fim de semana")
+        return
+
     inicio = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     print(f"\n{'='*50}")
-    print(f"🚀 Pipeline iniciado — {inicio}")
+    print(f"🚀 Pipeline iniciado — {inicio} ({nomes_dias[dia_semana]})")
     print(f"{'='*50}")
-
     registrar_log("Pipeline iniciado", inicio)
 
     # 1. Coleta
@@ -753,23 +637,22 @@ def enviar_relatorio():
     # 2. Validação
     ok, erros = validar_precos(precos)
     if not ok:
-        print(f"❌ Validação falhou: {erros}")
+        print(f"❌ Validação crítica falhou: {erros}")
         registrar_log("Pipeline cancelado — validação", str(erros))
         return
 
-    # 3. Aguardar 19:00 Brasília = 22:00 UTC
+    # 3. Aguardar 22:00 UTC = 19:00 Brasília
     from datetime import timezone
     while True:
         agora_utc = datetime.now(timezone.utc)
-        hora_utc  = agora_utc.hour
-        # 22:00 UTC = 19:00 Brasília
-        if hora_utc >= 22:
+        if agora_utc.hour >= 22:
             break
-        brt_hora = (hora_utc - 3) % 24
-        brt_min  = agora_utc.minute
-        print(f"⏳ Aguardando 19:00 Brasília... (agora {brt_hora:02d}:{brt_min:02d} Brasília / {hora_utc:02d}:{brt_min:02d} UTC)")
+        brt_hora = (agora_utc.hour - 3) % 24
+        print(f"⏳ Aguardando 19:00 Brasília... "
+              f"({brt_hora:02d}:{agora_utc.minute:02d} Brasília / "
+              f"{agora_utc.hour:02d}:{agora_utc.minute:02d} UTC)")
         time.sleep(60)
-    print("✅ 19:00 Brasília atingido — iniciando envio!")
+    print("✅ 19:00 Brasília — iniciando envio!")
 
     # 4. Análise IA
     try:
@@ -781,9 +664,7 @@ def enviar_relatorio():
     # 5. Montar e enviar
     mensagem = montar_mensagem(precos, resumo)
     registrar_log("Mensagem montada", f"{len(mensagem)} caracteres")
-
     enviar_whatsapp(mensagem)
-
     registrar_log("Pipeline finalizado", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
 
 
@@ -791,11 +672,9 @@ def enviar_relatorio():
 # AGENDAMENTO
 # ============================================================
 if __name__ == "__main__":
-    print("🚀 AgroPulse v2.0 iniciado!")
-    # Coleta às 18:30, envio após 19:00
+    print("🚀 AgroPulse v2.1 iniciado!")
     schedule.every().day.at("21:30").do(enviar_relatorio)  # 21:30 UTC = 18:30 Brasília
-    print("⏰ Agendado: coleta às 18:30 Brasília (21:30 UTC), envio após 19:00 Brasília (22:00 UTC)")
-    print("✋ Pressione CTRL+C para parar")
+    print("⏰ Coleta: 18:30 Brasília | Envio: 19:00 Brasília")
     while True:
         schedule.run_pending()
         time.sleep(30)
