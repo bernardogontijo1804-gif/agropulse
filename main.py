@@ -1,12 +1,11 @@
 import threading
-import schedule
 import time
 import os
 import json
 import sqlite3
 from formulario import app as formulario_app
 from painel import app as painel_app, init_db
-from agropulse import enviar_relatorio
+import agropulse as ag
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from flask import Flask, request, redirect
 
@@ -50,10 +49,6 @@ def redirecionar_admin():
 
 @formulario_app.route("/zapi-webhook", methods=["POST"])
 def zapi_webhook():
-    """
-    Recebe eventos do Z-API quando alguém manda mensagem para a AgroPulse.
-    Se for mensagem de ativação de cadastro, responde com boas-vindas.
-    """
     import requests as req
     data = request.get_json(silent=True)
     if not data:
@@ -62,28 +57,23 @@ def zapi_webhook():
     print(f"📩 Z-API Webhook: {json.dumps(data)[:300]}")
 
     try:
-        # Só processa mensagens recebidas (não as enviadas por nós)
         if data.get("fromMe") == True:
             return "OK", 200
 
-        # Pega o número e texto da mensagem
         phone = data.get("phone", "")
         texto = data.get("text", {}).get("message", "") if isinstance(data.get("text"), dict) else ""
 
         if not phone or not texto:
             return "OK", 200
 
-        # Normaliza o número (remove @s.whatsapp.net se vier assim)
         numero = phone.replace("@s.whatsapp.net", "").replace("+", "").strip()
 
-        # Verifica se é mensagem de ativação de cadastro
         palavras_ativacao = ["cadastrar", "relatório", "relatorio", "cotações", "cotacoes", "agropulse"]
         eh_ativacao = any(p in texto.lower() for p in palavras_ativacao)
 
         if not eh_ativacao:
             return "OK", 200
 
-        # Busca o produtor no banco pelo número
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         numero_sem55 = numero[2:] if numero.startswith("55") else numero
@@ -93,18 +83,16 @@ def zapi_webhook():
 
         nome = row[0] if row else "Produtor"
 
-        # Monta e envia mensagem de boas-vindas
-        zapi_instance    = os.environ.get("ZAPI_INSTANCE_ID", "")
-        zapi_token       = os.environ.get("ZAPI_TOKEN", "")
+        zapi_instance     = os.environ.get("ZAPI_INSTANCE_ID", "")
+        zapi_token        = os.environ.get("ZAPI_TOKEN", "")
         zapi_client_token = os.environ.get("ZAPI_CLIENT_TOKEN", "")
 
         mensagem_bv = (
             f"🌾 Olá, *{nome}*! Seja bem-vindo à *AgroPulse*! ✅\n\n"
             f"Seu cadastro está *ativo* e você já vai receber os relatórios diários!\n\n"
-            f"Todo dia às *18h* você receberá:\n"
+            f"Todo dia às *19h* você receberá:\n"
             f"📊 Cotações da Bolsa de Chicago\n"
             f"💵 Câmbio do dia\n"
-            f"🚢 Preços nos portos brasileiros\n"
             f"🤖 Análise gerada por Inteligência Artificial\n\n"
             f"_AgroPulse AI — Informação que vale dinheiro_ 💰"
         )
@@ -115,7 +103,6 @@ def zapi_webhook():
             json={"phone": numero, "message": mensagem_bv},
             timeout=10)
 
-        # Registra no log
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)",
@@ -141,16 +128,18 @@ def debug_precos():
         "Algodao": "CT=F",
         "Petroleo WTI": "CL=F",
         "Petroleo Brent": "BZ=F",
-        "Dolar": "BRL=X",
+        "Dolar": "USDBRL=X",
     }
     resultado = []
     for nome, simbolo in simbolos.items():
         try:
             ticker = yf.Ticker(simbolo)
-            hist = ticker.history(period="2d")
+            hist = ticker.history(period="2d", auto_adjust=False)
             if len(hist) >= 2:
                 atual = hist["Close"].iloc[-1]
-                resultado.append(f"{nome} ({simbolo}): {atual:.4f}")
+                anterior = hist["Close"].iloc[-2]
+                variacao = ((atual - anterior) / anterior) * 100
+                resultado.append(f"{nome} ({simbolo}): {atual:.4f} ({variacao:+.2f}%)")
             else:
                 resultado.append(f"{nome} ({simbolo}): sem dados suficientes")
         except Exception as e:
@@ -159,16 +148,14 @@ def debug_precos():
 
 @formulario_app.route("/teste-envio")
 def teste_envio():
-    import agropulse as ag
     resultado = []
     try:
         precos = ag.buscar_precos()
-        resultado.append(f"OK Precos buscados: {len(precos)} commodities")
+        resultado.append(f"OK Precos buscados: {len(precos)} ativos")
         resumo = ag.gerar_resumo_ia(precos)
         resultado.append(f"OK Resumo IA: {resumo[:60]}...")
         mensagem = ag.montar_mensagem(precos, resumo)
         resultado.append(f"OK Mensagem: {len(mensagem)} chars")
-        import sqlite3
         conn = sqlite3.connect(ag.DB_PATH)
         c = conn.cursor()
         c.execute("SELECT nome, whatsapp FROM produtores WHERE ativo=1")
@@ -188,8 +175,6 @@ def teste_envio():
 
 @formulario_app.route("/backup")
 def backup():
-    """Exporta todos os produtores em JSON para backup manual"""
-    import sqlite3
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -227,10 +212,8 @@ def backup():
     except Exception as e:
         return f"❌ Erro ao gerar backup: {str(e)}", 500
 
-
 @formulario_app.route("/restaurar", methods=["POST"])
 def restaurar():
-    """Restaura produtores a partir de JSON de backup"""
     try:
         data = request.get_json(silent=True)
         if not data or "produtores" not in data:
@@ -243,7 +226,7 @@ def restaurar():
 
         for p in data["produtores"]:
             try:
-                c.execute("""INSERT OR IGNORE INTO produtores 
+                c.execute("""INSERT OR IGNORE INTO produtores
                     (nome, whatsapp, ativo, commodities, data_cadastro, mensagens_enviadas)
                     VALUES (?,?,?,?,?,?)""",
                     (p["nome"], p["whatsapp"], p.get("ativo", 1),
@@ -254,7 +237,7 @@ def restaurar():
                     restaurados += 1
                 else:
                     ignorados += 1
-            except:
+            except Exception:
                 ignorados += 1
 
         c.execute("INSERT INTO logs (evento, detalhes) VALUES (?,?)",
@@ -266,15 +249,12 @@ def restaurar():
     except Exception as e:
         return f"❌ Erro ao restaurar: {str(e)}", 500
 
-
 @formulario_app.route("/diagnostico")
 def diagnostico():
     import requests as req
-    import sqlite3
 
     resultado = []
 
-    # 1. Checar variáveis de ambiente
     zapi_instance = os.environ.get("ZAPI_INSTANCE_ID", "")
     zapi_token    = os.environ.get("ZAPI_TOKEN", "")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -283,7 +263,6 @@ def diagnostico():
     resultado.append(f"ZAPI_TOKEN: {'✅ preenchido' if zapi_token else '❌ VAZIO'}")
     resultado.append(f"ANTHROPIC_API_KEY: {'✅ preenchido' if anthropic_key else '❌ VAZIO'}")
 
-    # 2. Buscar produtores
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -295,8 +274,8 @@ def diagnostico():
             resultado.append(f"  - {p[0]} | {p[1]} | ativo={p[2]}")
     except Exception as e:
         resultado.append(f"Erro ao buscar produtores: {e}")
+        produtores = []
 
-    # 3. Testar Z-API com primeiro produtor
     if produtores and zapi_instance and zapi_token:
         numero = produtores[0][1].strip().replace(" ", "").replace("-", "")
         if not numero.startswith("55"):
@@ -325,14 +304,18 @@ app.wsgi_app = DispatcherMiddleware(formulario_app, {
 })
 
 def rodar_agendamento():
-    schedule.every().day.at("18:00").do(enviar_relatorio)
-    print("⏰ Agendamento iniciado — envio todo dia às 18h")
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    """
+    Roda o loop de agendamento da v2.5 em thread separada.
+    O loop é baseado em ZoneInfo("America/Sao_Paulo") — independente
+    do timezone do servidor. Coleta às 18:30 BRT, envia às 19:00 BRT.
+    Controle de execução única por dia persistido no SQLite.
+    """
+    print("⏰ Iniciando loop de agendamento AgroPulse v2.5 (18:30 BRT / 19:00 BRT)")
+    ag.loop_agendamento()
 
 if __name__ == "__main__":
     init_db()
+    ag._garantir_tabela_execucoes()
 
     thread = threading.Thread(target=rodar_agendamento, daemon=True)
     thread.start()
@@ -344,4 +327,3 @@ if __name__ == "__main__":
     print(f"🔗 Webhook:     http://localhost:{port}/webhook")
     print(f"🧪 Teste envio: http://localhost:{port}/teste-envio")
     app.run(debug=False, host="0.0.0.0", port=port)
-    
